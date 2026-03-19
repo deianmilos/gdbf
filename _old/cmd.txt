@@ -1,0 +1,8 @@
+# The input parameters are the following
+gcc -o LaGDBF LaGDBF.c -lm
+./LaGDBF NbMonteCarlo NbIterMax MatrixFileName BaseMatrix ResultFileName ChannelErrorProba NumberOfCodewordsInError Graine
+
+gcc -o GDBF GDBF.c -lm
+
+
+GDBF 100000000 100 ../wifi/wifin_r_1_2_Dform ../wifi/wifin_r_1_2_Base Res 0.01 100 1 0.01 0.001 0.001
