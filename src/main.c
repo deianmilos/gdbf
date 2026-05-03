@@ -144,7 +144,7 @@ int main(int argc, char *argv[])
     return 1;
   }
 
-  srand((unsigned int)(time(NULL) + RAND_SEED));
+  srand(RAND_SEED);
 
   for (alpha = alpha_max; alpha > alpha_min; alpha -= alpha_step) {
     SimulationStats stats;

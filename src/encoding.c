@@ -162,11 +162,6 @@ int BuildEncodingTransformFromSparseMatrix(const SparseMatrixData *matrix, Encod
     }
   }
 
-  for (columnIndex = 0; columnIndex < matrix->N; columnIndex++) {
-    printf("%d ", encoding->ColumnPermutation[columnIndex]);
-  }
-  printf("\n");
-
   encoding->Rank = ComputeMrbSystematicForm(
     encoding->ColumnPermutation,
     encoding->SystematicMatrix,
