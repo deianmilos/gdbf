@@ -1,0 +1,14 @@
+# Build artifacts
+*.exe
+*.o
+
+# Training data (large, regenerated)
+data/dataset.csv
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# IDE
+.vscode/
