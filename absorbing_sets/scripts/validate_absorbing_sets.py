@@ -19,9 +19,9 @@ Usage:
 
 Example:
     python validate_absorbing_sets.py \
-        input/wifin_r_1_2_Base \
-        results/absorbing_sets_6.txt \
-        results/absorbing_sets_6_validated.txt
+        codes/wifin_r_1_2/wifin_r_1_2_Base \
+        absorbing_sets/validated/absorbing_sets_6.txt \
+        absorbing_sets/validated/absorbing_sets_6_validated.txt
 """
 
 import sys

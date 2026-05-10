@@ -36,7 +36,7 @@ int main(int argc, char *argv[])
         fprintf(stderr, "  OutputFile: path to write results\n");
         fprintf(stderr, "\n");
         fprintf(stderr, "Example:\n");
-        fprintf(stderr, "  %s input/wifin_r_1_2_Base results/absorbing_sets.txt\n", argv[0]);
+        fprintf(stderr, "  %s codes/wifin_r_1_2/wifin_r_1_2_Base absorbing_sets/validated/absorbing_sets_6.txt\n", argv[0]);
         fprintf(stderr, "\n");
         fprintf(stderr, "Output format (one AS per line):\n");
         fprintf(stderr, "  <size> <unsatisfied_checks> <v1> <v2> ... <vn>\n");
