@@ -3,7 +3,7 @@
 #include <math.h>
 
 #if AS_ML_MODE
-#include "../ml/as_model_quantized.h"
+#include "../model/as_model_quantized.h"
 #endif
 
 extern FILE *datasetFile;

@@ -4,9 +4,60 @@
 #include "channel.h"
 #include "decoder.h"
 #include "stats.h"
-#include <io.h> 
+#include <io.h>
+#include <direct.h>
 
 FILE *datasetFile = NULL;
+
+/* Extract the directory-name component one level up from the last path separator.
+  e.g. "codes/wifin_r_1_2/wifin_r_1_2_Base" -> "wifin_r_1_2" */
+static void ExtractCodeName(const char *path, char *out, int maxLen)
+{
+  const char *p = path;
+  const char *lastSep = NULL;
+  const char *prevSep = NULL;
+
+  while (*p) {
+    if (*p == '/' || *p == '\\') {
+      prevSep = lastSep;
+      lastSep = p;
+    }
+    p++;
+  }
+
+  if (prevSep != NULL && lastSep != NULL) {
+    int len = (int)(lastSep - prevSep - 1);
+    if (len > maxLen - 1) len = maxLen - 1;
+    strncpy(out, prevSep + 1, len);
+    out[len] = '\0';
+  } else if (lastSep != NULL) {
+    strncpy(out, lastSep + 1, maxLen - 1);
+    out[maxLen - 1] = '\0';
+  } else {
+    strncpy(out, path, maxLen - 1);
+    out[maxLen - 1] = '\0';
+  }
+}
+
+/* Create all intermediate directories in path (POSIX-style or Windows). */
+static void EnsureDir(const char *path)
+{
+  char tmp[512];
+  char *p;
+
+  strncpy(tmp, path, sizeof(tmp) - 1);
+  tmp[sizeof(tmp) - 1] = '\0';
+
+  for (p = tmp + 1; *p; p++) {
+    if (*p == '/' || *p == '\\') {
+      char c = *p;
+      *p = '\0';
+      _mkdir(tmp);
+      *p = c;
+    }
+  }
+  _mkdir(tmp);
+}
 
 #if AS_ML_MODE
 extern long long dbg_stagnation_events;
@@ -94,7 +145,13 @@ int main(int argc, char *argv[])
   EncodingTransformData encoding;
 
   FILE *fout = NULL;
+  char codeName[256];
+  char resultDir[512];
   char resultFileName[512];
+#if AS_ML_MODE
+  char mlSummaryCsvPath[512];
+#endif
+  const char *runType;
 
   int NbMonteCarlo;
   int maxDecoderIterations;
@@ -124,18 +181,18 @@ int main(int argc, char *argv[])
   long long overallFramesMlNotEffective = 0;
 #endif
 
-  if (argc < 7) {
-    fprintf(stderr, "Usage: %s <NbMonteCarlo> <NbIter> <MatrixFile> <BaseMatrixPrefix> <ResultFile> <alpha> [other args...]\n", argv[0]);
+  if (argc < 6) {
+    fprintf(stderr, "Usage: %s <NbMonteCarlo> <NbIter> <MatrixFile> <BaseMatrixPrefix> <alpha> [NBframes [alpha_max [alpha_min [alpha_step]]]]\n", argv[0]);
     return 1;
   }
 
   NbMonteCarlo = atoi(argv[1]);
   maxDecoderIterations = atoi(argv[2]);
-  NBframes = (argc > 7) ? atoi(argv[7]) : 0;
-  alpha = (float)atof(argv[6]);
-  alpha_max = (argc > 9) ? (float)atof(argv[9]) : alpha;
-  alpha_min = (argc > 10) ? (float)atof(argv[10]) : (alpha - 1.0f);
-  alpha_step = (argc > 11) ? (float)atof(argv[11]) : 1.0f;
+  alpha = (float)atof(argv[5]);
+  NBframes = (argc > 6) ? atoi(argv[6]) : 0;
+  alpha_max = (argc > 7) ? (float)atof(argv[7]) : alpha;
+  alpha_min = (argc > 8) ? (float)atof(argv[8]) : (alpha - 1.0f);
+  alpha_step = (argc > 9) ? (float)atof(argv[9]) : 1.0f;
 
   if (NbMonteCarlo <= 0) {
     fprintf(stderr, "NbMonteCarlo must be > 0\n");
@@ -196,7 +253,21 @@ int main(int argc, char *argv[])
   printf("-------------------------La-P-GDBF--------------------------------------------------\n");
 #endif
 
-  snprintf(resultFileName, sizeof(resultFileName), "%s.res", argv[5]);
+  ExtractCodeName(argv[4], codeName, sizeof(codeName));
+#if AS_TRAIN_MODE
+  runType = "collect";
+#elif AS_ML_MODE
+  runType = "ml";
+#else
+  runType = "baseline";
+#endif
+  snprintf(resultDir, sizeof(resultDir), "results/%s/%s", codeName, runType);
+  EnsureDir(resultDir);
+  snprintf(resultFileName, sizeof(resultFileName), "%s/simulation.res", resultDir);
+#if AS_ML_MODE
+  snprintf(mlSummaryCsvPath, sizeof(mlSummaryCsvPath), "%s/ml_outcome_summary.csv", resultDir);
+#endif
+
   fout = fopen(resultFileName, "a+");
   if (fout == NULL) {
     fprintf(stderr, "Output file %s error!.. Abort\n", resultFileName);
@@ -219,8 +290,14 @@ int main(int argc, char *argv[])
 
 #if AS_TRAIN_MODE
   {
-    int datasetExists = (access("data/dataset.csv", 0) == 0);
-    datasetFile = fopen("data/dataset.csv", "a");
+    char datasetDir[512];
+    char datasetPath[512];
+    int datasetExists;
+    snprintf(datasetDir, sizeof(datasetDir), "datasets/%s", codeName);
+    EnsureDir(datasetDir);
+    snprintf(datasetPath, sizeof(datasetPath), "%s/dataset.csv", datasetDir);
+    datasetExists = (access(datasetPath, 0) == 0);
+    datasetFile = fopen(datasetPath, "a");
     if (!datasetFile) {
         printf("ERROR opening dataset file\n");
         return 1;
@@ -365,7 +442,7 @@ int main(int argc, char *argv[])
 
 #if AS_ML_MODE
     AppendMlOutcomeSummaryCsvPerAlpha(
-      "results/ml_outcome_summary_per_alpha.csv",
+      mlSummaryCsvPath,
       resultFileName,
       NbMonteCarlo,
       maxDecoderIterations,
@@ -422,7 +499,7 @@ int main(int argc, char *argv[])
              : 0.0);
   }
 
-  printf("  CSV summary written to               : results/ml_outcome_summary_per_alpha.csv\n");
+  printf("  CSV summary written to               : %s\n", mlSummaryCsvPath);
 #endif
 
   return 0;
