@@ -2,28 +2,28 @@
 Train absorbing-set escape model and export C headers.
 
 Usage:
-  python ml/train_model.py
+    python training/train.py
 """
 
 import numpy as np
 
-from training_config import (
+from config import (
     DATASET_PATH,
     QUANTIZED_OUTPUT_PATH,
     MIN_TRAIN_SAMPLES_WARNING,
     MODEL_OUTPUT_PATH,
     REF_OUTPUT_PATH,
 )
-from training_data import load_data
-from training_export import export_quantized_header, export_ref_header, export_to_c_header
-from training_model import extract_weights_pytorch, require_torch, train_pytorch
+from data import load_data
+from export import export_quantized_header, export_ref_header, export_to_c_header
+from model import extract_weights_pytorch, require_torch, train_pytorch
 
 
 def main():
     if not DATASET_PATH.exists():
         print(f"ERROR: {DATASET_PATH} not found.")
         print("Run the GDBF simulator first to generate training data:")
-        print("  ./GDBF 1000000 100 ./input/wifin_r_1_2_Dform ./input/wifin_r_1_2_Base ./results/Res 0.035 0 0")
+        print("  ./GDBF_TRAIN 1000000 100 codes/wifin_r_1_2/wifin_r_1_2_Dform codes/wifin_r_1_2/wifin_r_1_2_Base 0.035")
         raise SystemExit(1)
 
     X, y, _, _ = load_data(DATASET_PATH)

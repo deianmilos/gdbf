@@ -1,4 +1,4 @@
-from training_config import HIDDEN1, HIDDEN2, THRESHOLD
+from config import HIDDEN1, HIDDEN2, THRESHOLD
 
 
 def _array_to_c_float(arr, name):

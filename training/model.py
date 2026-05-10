@@ -1,6 +1,6 @@
 import numpy as np
 
-from training_config import (
+from config import (
     BATCH_SIZE,
     EPOCHS,
     HIDDEN1,
