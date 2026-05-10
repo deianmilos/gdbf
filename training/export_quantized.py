@@ -3,6 +3,11 @@ import math
 import numpy as np
 
 
+def _header_guard(output_path):
+  stem = output_path.replace("\\", "/").split("/")[-1].replace(".", "_")
+  return stem.upper()
+
+
 def _arr8(a, name):
     flat = a.flatten().astype(np.int8)
     rows = [f"static const int8_t {name}[{len(flat)}] = {{"]
@@ -50,13 +55,14 @@ def export_quantized_header(w1, b1, w2, b2, w3, b3, mean, std, output_path):
     hidden2 = w2.shape[0]
     output_size = w3.shape[0]
 
+    guard = _header_guard(output_path)
     with open(output_path, "w") as f:
         f.write("/* AS escape model - quantized fixed-point version */\n")
         f.write(f"/* Input:  {input_size} raw features (no normalization at runtime) */\n")
         f.write(f"/* Hidden: {hidden1} -> {hidden2}  (int8 weights, int32 accumulators) */\n")
         f.write(f"/* Output: {output_size} raw int32 scores  (positive = predict error) */\n")
         f.write("/* No float, no exp, no division - suitable for FPGA / MCU. */\n\n")
-        f.write("#ifndef AS_MODEL_QUANTIZED_H\n#define AS_MODEL_QUANTIZED_H\n\n")
+        f.write(f"#ifndef {guard}\n#define {guard}\n\n")
         f.write("#include <stdint.h>\n\n")
         f.write(f"#define AS_QUANTIZED_INPUT_SIZE  {input_size}\n")
         f.write(f"#define AS_QUANTIZED_HIDDEN1     {hidden1}\n")
@@ -127,7 +133,7 @@ static void as_quantized_encode_features(const float *features, int8_t *feat_int
 }
 """
         )
-        f.write("\n#endif /* AS_MODEL_QUANTIZED_H */\n")
+        f.write(f"\n#endif /* {guard} */\n")
 
     w1_err = float(np.abs(w1f - w1q.astype(np.float32) / sw1).mean())
     w2_err = float(np.abs(w2 - w2q.astype(np.float32) / sw2).mean())

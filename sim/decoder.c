@@ -3,7 +3,11 @@
 #include <math.h>
 
 #if AS_ML_MODE
-#include "../model/as_model_quantized.h"
+#if __has_include("../model/as_model_IRISC_dv3_R050_L54_N1296_quantized.h")
+#include "../model/as_model_IRISC_dv3_R050_L54_N1296_quantized.h"
+#else
+#error "No quantized model header found in model/. Train and export headers first."
+#endif
 #endif
 
 extern FILE *datasetFile;
@@ -171,7 +175,7 @@ static void SelectWorstBits(const int *bitEnergy, int codeLength,
   }
 }
 
-#if AS_TRAIN_MODE
+#if AS_COLLECT_MODE
 static void SaveASTrainingData(
     const int *decodedBits,
     const int *receivedword,
@@ -276,7 +280,7 @@ static void ApplyMlFlipMask(int *decodedBits, const int *worstIdx, const int *fl
     }
   }
 }
-#elif AS_TRAIN_MODE
+#elif AS_COLLECT_MODE
 static void FlipWorstBits(int *decodedBits, const int *worstIdx)
 {
   int j;
@@ -437,7 +441,7 @@ int DecodeFrameGdbf(
             continue;
           }
           alreadyEscaped = 1;
-#elif AS_TRAIN_MODE
+#elif AS_COLLECT_MODE
           /* Training mode: emit one sample, then force a state change. */
           SaveASTrainingData(decodedBits, receivedword, codeword, bitEnergy, worstIdx);
           FlipWorstBits(decodedBits, worstIdx);

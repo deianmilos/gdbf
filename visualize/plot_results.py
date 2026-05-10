@@ -189,8 +189,8 @@ def make_plot(
         )
 
     ax.set_yscale("log")
-    ax.set_xlabel("Alpha (crossover probability)")
-    ax.set_ylabel("FER (log scale)")
+    ax.set_xlabel("Alpha")
+    ax.set_ylabel("FER")
     ax.set_title(title)
     ax.legend(loc="upper right", fontsize=9)
     ax.grid(True, which="major", linestyle="--")
@@ -199,8 +199,8 @@ def make_plot(
 
     # Force x-axis from larger alpha to smaller alpha.
     all_alphas = baseline["alpha"] + ml["alpha"]
-    # ax.set_xlim(max(all_alphas), min(all_alphas))
-    ax.set_xlim(0.01, min(all_alphas))
+    ax.set_xlim(max(all_alphas), min(all_alphas))
+    # ax.set_xlim(0.01, min(all_alphas))
 
     fig.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)

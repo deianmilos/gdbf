@@ -9,34 +9,102 @@
 
 FILE *datasetFile = NULL;
 
-/* Extract the directory-name component one level up from the last path separator.
-  e.g. "codes/wifin_r_1_2/wifin_r_1_2_Base" -> "wifin_r_1_2" */
-static void ExtractCodeName(const char *path, char *out, int maxLen)
+static void PrintUsage(const char *program)
 {
-  const char *p = path;
-  const char *lastSep = NULL;
-  const char *prevSep = NULL;
+  fprintf(stderr,
+    "Usage (named): %s --frames <N> --max-iter <N> --code <CodeName> --alpha <A> "
+    "[--nb-frames <N>] [--alpha-max <A>] [--alpha-min <A>] [--alpha-step <A>]\n",
+    program);
+  fprintf(stderr,
+    "Usage (positional): %s <NbMonteCarlo> <NbIter> <CodeName> <alpha> "
+    "[NBframes [alpha_max [alpha_min [alpha_step]]]]\n",
+    program);
+}
 
-  while (*p) {
-    if (*p == '/' || *p == '\\') {
-      prevSep = lastSep;
-      lastSep = p;
+static int ParseNamedArgs(
+  int argc,
+  char *argv[],
+  int *nbMonteCarlo,
+  int *maxDecoderIterations,
+  char *codeName,
+  int codeNameLen,
+  float *alpha,
+  int *nbFrames,
+  float *alphaMax,
+  float *alphaMin,
+  float *alphaStep)
+{
+  int i;
+  int hasFrames = 0;
+  int hasMaxIter = 0;
+  int hasCode = 0;
+  int hasAlpha = 0;
+  int hasAlphaMax = 0;
+  int hasAlphaMin = 0;
+  int hasAlphaStep = 0;
+
+  *nbFrames = 0;
+
+  for (i = 1; i < argc; i++) {
+    const char *arg = argv[i];
+
+    if (strcmp(arg, "--help") == 0 || strcmp(arg, "-h") == 0) {
+      PrintUsage(argv[0]);
+      return 1;
     }
-    p++;
+
+    if (strncmp(arg, "--", 2) != 0) {
+      fprintf(stderr, "Unknown positional token in named mode: %s\n", arg);
+      return 1;
+    }
+
+    if (i + 1 >= argc) {
+      fprintf(stderr, "Missing value for option: %s\n", arg);
+      return 1;
+    }
+
+    i++;
+    if (strcmp(arg, "--frames") == 0) {
+      *nbMonteCarlo = atoi(argv[i]);
+      hasFrames = 1;
+    } else if (strcmp(arg, "--max-iter") == 0) {
+      *maxDecoderIterations = atoi(argv[i]);
+      hasMaxIter = 1;
+    } else if (strcmp(arg, "--code") == 0) {
+      strncpy(codeName, argv[i], codeNameLen - 1);
+      codeName[codeNameLen - 1] = '\0';
+      hasCode = 1;
+    } else if (strcmp(arg, "--alpha") == 0) {
+      *alpha = (float)atof(argv[i]);
+      hasAlpha = 1;
+    } else if (strcmp(arg, "--nb-frames") == 0) {
+      *nbFrames = atoi(argv[i]);
+    } else if (strcmp(arg, "--alpha-max") == 0) {
+      *alphaMax = (float)atof(argv[i]);
+      hasAlphaMax = 1;
+    } else if (strcmp(arg, "--alpha-min") == 0) {
+      *alphaMin = (float)atof(argv[i]);
+      hasAlphaMin = 1;
+    } else if (strcmp(arg, "--alpha-step") == 0) {
+      *alphaStep = (float)atof(argv[i]);
+      hasAlphaStep = 1;
+    } else {
+      fprintf(stderr, "Unknown option: %s\n", arg);
+      return 1;
+    }
   }
 
-  if (prevSep != NULL && lastSep != NULL) {
-    int len = (int)(lastSep - prevSep - 1);
-    if (len > maxLen - 1) len = maxLen - 1;
-    strncpy(out, prevSep + 1, len);
-    out[len] = '\0';
-  } else if (lastSep != NULL) {
-    strncpy(out, lastSep + 1, maxLen - 1);
-    out[maxLen - 1] = '\0';
-  } else {
-    strncpy(out, path, maxLen - 1);
-    out[maxLen - 1] = '\0';
+  if (!hasFrames || !hasMaxIter || !hasCode || !hasAlpha) {
+    fprintf(stderr, "Missing required options in named mode.\n");
+    PrintUsage(argv[0]);
+    return 1;
   }
+
+  if (!hasAlphaMax) *alphaMax = *alpha;
+  if (!hasAlphaMin) *alphaMin = *alpha - 1.0f;
+  if (!hasAlphaStep) *alphaStep = 1.0f;
+
+  return 0;
 }
 
 /* Create all intermediate directories in path (POSIX-style or Windows). */
@@ -146,6 +214,8 @@ int main(int argc, char *argv[])
 
   FILE *fout = NULL;
   char codeName[256];
+  char matrixFilePath[512];
+  char baseMatrixPrefix[512];
   char resultDir[512];
   char resultFileName[512];
 #if AS_ML_MODE
@@ -181,18 +251,40 @@ int main(int argc, char *argv[])
   long long overallFramesMlNotEffective = 0;
 #endif
 
-  if (argc < 6) {
-    fprintf(stderr, "Usage: %s <NbMonteCarlo> <NbIter> <MatrixFile> <BaseMatrixPrefix> <alpha> [NBframes [alpha_max [alpha_min [alpha_step]]]]\n", argv[0]);
-    return 1;
+  if (argc > 1 && strncmp(argv[1], "--", 2) == 0) {
+    if (ParseNamedArgs(
+          argc,
+          argv,
+          &NbMonteCarlo,
+          &maxDecoderIterations,
+          codeName,
+          (int)sizeof(codeName),
+          &alpha,
+          &NBframes,
+          &alpha_max,
+          &alpha_min,
+          &alpha_step) != 0) {
+      return 1;
+    }
+  } else {
+    if (argc < 5) {
+      PrintUsage(argv[0]);
+      return 1;
+    }
+
+    NbMonteCarlo = atoi(argv[1]);
+    maxDecoderIterations = atoi(argv[2]);
+    strncpy(codeName, argv[3], sizeof(codeName) - 1);
+    codeName[sizeof(codeName) - 1] = '\0';
+    alpha = (float)atof(argv[4]);
+    NBframes = (argc > 5) ? atoi(argv[5]) : 0;
+    alpha_max = (argc > 6) ? (float)atof(argv[6]) : alpha;
+    alpha_min = (argc > 7) ? (float)atof(argv[7]) : (alpha - 1.0f);
+    alpha_step = (argc > 8) ? (float)atof(argv[8]) : 1.0f;
   }
 
-  NbMonteCarlo = atoi(argv[1]);
-  maxDecoderIterations = atoi(argv[2]);
-  alpha = (float)atof(argv[5]);
-  NBframes = (argc > 6) ? atoi(argv[6]) : 0;
-  alpha_max = (argc > 7) ? (float)atof(argv[7]) : alpha;
-  alpha_min = (argc > 8) ? (float)atof(argv[8]) : (alpha - 1.0f);
-  alpha_step = (argc > 9) ? (float)atof(argv[9]) : 1.0f;
+  snprintf(matrixFilePath, sizeof(matrixFilePath), "codes/%s/%s_Dform", codeName, codeName);
+  snprintf(baseMatrixPrefix, sizeof(baseMatrixPrefix), "codes/%s/%s_Base", codeName, codeName);
 
   if (NbMonteCarlo <= 0) {
     fprintf(stderr, "NbMonteCarlo must be > 0\n");
@@ -211,11 +303,11 @@ int main(int argc, char *argv[])
     return 1;
   }
 
-  if (LoadSparseMatrixData(argv[3], &matrix) != 0) {
+  if (LoadSparseMatrixData(matrixFilePath, &matrix) != 0) {
     return 1;
   }
 
-  if (LoadBaseMatrixData(argv[4], &base) != 0) {
+  if (LoadBaseMatrixData(baseMatrixPrefix, &base) != 0) {
     FreeSparseMatrixData(&matrix);
     return 1;
   }
@@ -253,8 +345,7 @@ int main(int argc, char *argv[])
   printf("-------------------------La-P-GDBF--------------------------------------------------\n");
 #endif
 
-  ExtractCodeName(argv[4], codeName, sizeof(codeName));
-#if AS_TRAIN_MODE
+#if AS_COLLECT_MODE
   runType = "collect";
 #elif AS_ML_MODE
   runType = "ml";
@@ -288,7 +379,7 @@ int main(int argc, char *argv[])
   layerVariableBuffer = (int *)calloc(base.CirculantSize, sizeof(int));
   shiftedLayerVariableBuffer = (int *)calloc(base.CirculantSize, sizeof(int));
 
-#if AS_TRAIN_MODE
+#if AS_COLLECT_MODE
   {
     char datasetDir[512];
     char datasetPath[512];

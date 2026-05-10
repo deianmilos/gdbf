@@ -1,6 +1,11 @@
 from config import HIDDEN1, HIDDEN2, THRESHOLD
 
 
+def _header_guard(output_path):
+  stem = output_path.replace("\\", "/").split("/")[-1].replace(".", "_")
+  return stem.upper()
+
+
 def _array_to_c_float(arr, name):
     flat = arr.flatten()
     lines = [f"static const float {name}[{len(flat)}] = {{"]
@@ -20,10 +25,11 @@ def export_to_c_header(model, mean, std, output_path):
     w3 = state["4.weight"].numpy()
     b3 = state["4.bias"].numpy()
 
+    guard = _header_guard(output_path)
     with open(output_path, "w") as f:
         f.write("/* Auto-generated AS escape model weights */\n")
         f.write(f"/* Input: {w1.shape[1]} features, Output: 6 flip probabilities */\n\n")
-        f.write("#ifndef AS_MODEL_WEIGHTS_H\n#define AS_MODEL_WEIGHTS_H\n\n")
+        f.write(f"#ifndef {guard}\n#define {guard}\n\n")
 
         f.write(f"#define AS_MODEL_INPUT_SIZE {w1.shape[1]}\n")
         f.write(f"#define AS_MODEL_HIDDEN1 {HIDDEN1}\n")
@@ -90,7 +96,7 @@ static int as_model_predict(const float *features, int *flip_mask)
 }
 """
         )
-        f.write("\n#endif /* AS_MODEL_WEIGHTS_H */\n")
+        f.write(f"\n#endif /* {guard} */\n")
 
     print(f"\nExported model to {output_path}")
     print(f"  Parameters: {w1.size + b1.size + w2.size + b2.size + w3.size + b3.size}")
@@ -102,11 +108,12 @@ def export_ref_header(w1, b1, w2, b2, w3, b3, mean, std, output_path):
     hidden2 = w2.shape[0]
     output_size = w3.shape[0]
 
+    guard = _header_guard(output_path)
     with open(output_path, "w") as f:
         f.write("/* AS escape model - float reference (full precision) */\n")
         f.write(f"/* Input: {input_size} features  Hidden: {hidden1}->{hidden2}  Output: {output_size} */\n")
         f.write("/* Use this for validation and as the default software decoder. */\n\n")
-        f.write("#ifndef AS_MODEL_REF_H\n#define AS_MODEL_REF_H\n\n")
+        f.write(f"#ifndef {guard}\n#define {guard}\n\n")
         f.write(f"#define AS_MODEL_INPUT_SIZE  {input_size}\n")
         f.write(f"#define AS_MODEL_HIDDEN1     {hidden1}\n")
         f.write(f"#define AS_MODEL_HIDDEN2     {hidden2}\n")
@@ -153,6 +160,18 @@ static int as_ref_predict(const float *features, int *flip_mask)
 }
 """
         )
-        f.write("\n#endif /* AS_MODEL_REF_H */\n")
+        f.write(f"\n#endif /* {guard} */\n")
 
     print(f"Exported float reference header -> {output_path}")
+
+
+def export_weights_alias_header(output_path, ref_header_name):
+    guard = _header_guard(output_path)
+    with open(output_path, "w") as f:
+        f.write("/* Compatibility alias: use float reference implementation. */\n")
+        f.write(f"#ifndef {guard}\n#define {guard}\n\n")
+        f.write(f"#include \"{ref_header_name}\"\n\n")
+        f.write("#define as_model_predict as_ref_predict\n\n")
+        f.write(f"#endif /* {guard} */\n")
+
+    print(f"Exported compatibility weights alias -> {output_path}")

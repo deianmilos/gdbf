@@ -19,9 +19,18 @@
 #define AS_ML_MODE 0
 #endif
 
-/* AS_TRAIN_MODE: 0 = normal decoding, 1 = collect training rows and force escape */
+/* AS_COLLECT_MODE: 0 = normal decoding, 1 = collect training rows and force escape */
+#if !defined(AS_COLLECT_MODE) && defined(AS_TRAIN_MODE)
+#define AS_COLLECT_MODE AS_TRAIN_MODE
+#endif
+
+#ifndef AS_COLLECT_MODE
+#define AS_COLLECT_MODE 0
+#endif
+
+/* Backward compatibility for older build flags. */
 #ifndef AS_TRAIN_MODE
-#define AS_TRAIN_MODE 0
+#define AS_TRAIN_MODE AS_COLLECT_MODE
 #endif
 
 #define MAX_ABSORBING_SETS 1000
