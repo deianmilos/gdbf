@@ -12,6 +12,8 @@ except ImportError as exc:
         "Or with pip: pip install matplotlib"
     ) from exc
 
+import numpy as np
+
 
 LINE_RE = re.compile(
     r"^\s*"
@@ -61,43 +63,144 @@ def rows_to_series(rows):
     }
 
 
-def make_plot(baseline_rows, ml_rows, title, output_path, show_plot):
+def apply_publication_style():
+    plt.rcParams.update(
+        {
+            "font.family": "serif",
+            "font.serif": ["Times New Roman", "DejaVu Serif", "Computer Modern Roman"],
+            "axes.edgecolor": "black",
+            "axes.linewidth": 1.0,
+            "axes.facecolor": "white",
+            "figure.facecolor": "white",
+            "grid.color": "#666666",
+            "grid.linewidth": 0.8,
+            "grid.alpha": 0.55,
+            "xtick.direction": "in",
+            "ytick.direction": "in",
+            "xtick.top": True,
+            "ytick.right": True,
+            "legend.frameon": True,
+            "legend.framealpha": 1.0,
+            "legend.edgecolor": "black",
+        }
+    )
+
+
+def smooth_fer_curve(alphas, fers, interp_points=350, smooth_window=11):
+    x = np.asarray(alphas, dtype=float)
+    y = np.asarray(fers, dtype=float)
+
+    if x.size < 2:
+        return x, np.clip(y, 1e-15, None)
+
+    # Interpolate and smooth in log-domain for a cleaner FER trend.
+    sort_idx = np.argsort(x)
+    x_sorted = x[sort_idx]
+    y_sorted = np.clip(y[sort_idx], 1e-15, None)
+    log_y = np.log10(y_sorted)
+
+    dense_x = np.linspace(x_sorted.min(), x_sorted.max(), int(interp_points))
+    dense_log_y = np.interp(dense_x, x_sorted, log_y)
+
+    smooth_window = max(1, int(smooth_window))
+    if smooth_window % 2 == 0:
+        smooth_window += 1
+
+    if smooth_window > 1:
+        pad = smooth_window // 2
+        kernel = np.ones(smooth_window, dtype=float) / smooth_window
+        padded = np.pad(dense_log_y, (pad, pad), mode="edge")
+        dense_log_y = np.convolve(padded, kernel, mode="valid")
+
+    dense_y = np.power(10.0, dense_log_y)
+
+    # Plot from larger alpha to smaller alpha.
+    return dense_x[::-1], dense_y[::-1]
+
+
+def make_plot(
+    baseline_rows,
+    ml_rows,
+    title,
+    output_path,
+    show_plot,
+    interp_points,
+    smooth_window,
+    show_raw,
+):
     baseline = rows_to_series(baseline_rows)
     ml = rows_to_series(ml_rows)
 
-    plt.style.use("seaborn-v0_8-whitegrid")
-    fig, ax = plt.subplots(figsize=(10, 6))
+    base_x_s, base_y_s = smooth_fer_curve(
+        baseline["alpha"], baseline["fer"], interp_points=interp_points, smooth_window=smooth_window
+    )
+    ml_x_s, ml_y_s = smooth_fer_curve(
+        ml["alpha"], ml["fer"], interp_points=interp_points, smooth_window=smooth_window
+    )
+
+    apply_publication_style()
+    fig, ax = plt.subplots(figsize=(8.6, 5.4))
 
     ax.plot(
-        baseline["alpha"],
-        baseline["fer"],
-        marker="s",
-        linestyle="--",
-        linewidth=2,
-        markersize=6,
+        base_x_s,
+        base_y_s,
+        linestyle="-",
+        linewidth=1.8,
+        marker="x",
+        markevery=max(1, len(base_x_s) // 9),
+        markersize=7,
+        markeredgewidth=1.2,
         label="Baseline GDBF",
-        color="#d1495b",
+        color="black",
     )
     ax.plot(
-        ml["alpha"],
-        ml["fer"],
+        ml_x_s,
+        ml_y_s,
+        linestyle="--",
+        linewidth=1.8,
         marker="o",
-        linestyle="-",
-        linewidth=2.5,
+        markevery=max(1, len(ml_x_s) // 9),
         markersize=6,
+        markerfacecolor="white",
+        markeredgewidth=1.2,
         label="ML-assisted GDBF",
-        color="#00798c",
+        color="#b22222",
     )
+
+    if show_raw:
+        ax.scatter(
+            baseline["alpha"],
+            baseline["fer"],
+            s=18,
+            marker="x",
+            alpha=0.7,
+            color="black",
+            label="Baseline raw",
+        )
+        ax.scatter(
+            ml["alpha"],
+            ml["fer"],
+            s=18,
+            marker="o",
+            alpha=0.7,
+            facecolors="white",
+            edgecolors="#b22222",
+            label="ML raw",
+        )
+
     ax.set_yscale("log")
-    ax.set_xlabel("Alpha (crossover probability)")
-    ax.set_ylabel("FER (log scale)")
+    ax.set_xlabel("Alpha")
+    ax.set_ylabel("FER")
     ax.set_title(title)
-    ax.legend(loc="best")
-    ax.grid(True, which="both", linestyle=":", alpha=0.8)
+    ax.legend(loc="upper right", fontsize=9)
+    ax.grid(True, which="major", linestyle="--")
+    ax.grid(True, which="minor", linestyle=":", linewidth=0.7)
+    ax.minorticks_on()
 
     # Force x-axis from larger alpha to smaller alpha.
     all_alphas = baseline["alpha"] + ml["alpha"]
     ax.set_xlim(max(all_alphas), min(all_alphas))
+    # ax.set_xlim(0.01, min(all_alphas))
 
     fig.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -114,12 +217,12 @@ def build_parser():
     p = argparse.ArgumentParser(description="Plot FER comparison from .res files")
     p.add_argument(
         "--baseline",
-        default="results/Res_baseline.res",
+        default="results/wifin_r_1_2/baseline/simulation.res",
         help="Path to baseline .res file",
     )
     p.add_argument(
         "--ml",
-        default="results/Res_ml_v1.res",
+        default="results/wifin_r_1_2/ml/simulation.res",
         help="Path to ML .res file",
     )
     p.add_argument(
@@ -136,6 +239,23 @@ def build_parser():
         "--show",
         action="store_true",
         help="Show interactive window",
+    )
+    p.add_argument(
+        "--interp-points",
+        type=int,
+        default=6,
+        help="Number of interpolated points used for smooth plotting",
+    )
+    p.add_argument(
+        "--smooth-window",
+        type=int,
+        default=6,
+        help="Odd moving-average window (in interpolated points) applied in log-domain",
+    )
+    p.add_argument(
+        "--show-raw",
+        action="store_true",
+        help="Overlay raw FER markers on top of smooth curves",
     )
     return p
 
@@ -156,6 +276,9 @@ def main():
         title=args.title,
         output_path=output_path,
         show_plot=args.show,
+        interp_points=args.interp_points,
+        smooth_window=args.smooth_window,
+        show_raw=args.show_raw,
     )
 
 

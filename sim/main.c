@@ -1,0 +1,597 @@
+#include "common.h"
+#include "matrix_io.h"
+#include "encoding.h"
+#include "channel.h"
+#include "decoder.h"
+#include "stats.h"
+#include <io.h>
+#include <direct.h>
+
+FILE *datasetFile = NULL;
+
+static void PrintUsage(const char *program)
+{
+  fprintf(stderr,
+    "Usage (named): %s --frames <N> --max-iter <N> --code <CodeName> --alpha <A> "
+    "[--nb-frames <N>] [--alpha-max <A>] [--alpha-min <A>] [--alpha-step <A>]\n",
+    program);
+  fprintf(stderr,
+    "Usage (positional): %s <NbMonteCarlo> <NbIter> <CodeName> <alpha> "
+    "[NBframes [alpha_max [alpha_min [alpha_step]]]]\n",
+    program);
+}
+
+static int ParseNamedArgs(
+  int argc,
+  char *argv[],
+  int *nbMonteCarlo,
+  int *maxDecoderIterations,
+  char *codeName,
+  int codeNameLen,
+  float *alpha,
+  int *nbFrames,
+  float *alphaMax,
+  float *alphaMin,
+  float *alphaStep)
+{
+  int i;
+  int hasFrames = 0;
+  int hasMaxIter = 0;
+  int hasCode = 0;
+  int hasAlpha = 0;
+  int hasAlphaMax = 0;
+  int hasAlphaMin = 0;
+  int hasAlphaStep = 0;
+
+  *nbFrames = 0;
+
+  for (i = 1; i < argc; i++) {
+    const char *arg = argv[i];
+
+    if (strcmp(arg, "--help") == 0 || strcmp(arg, "-h") == 0) {
+      PrintUsage(argv[0]);
+      return 1;
+    }
+
+    if (strncmp(arg, "--", 2) != 0) {
+      fprintf(stderr, "Unknown positional token in named mode: %s\n", arg);
+      return 1;
+    }
+
+    if (i + 1 >= argc) {
+      fprintf(stderr, "Missing value for option: %s\n", arg);
+      return 1;
+    }
+
+    i++;
+    if (strcmp(arg, "--frames") == 0) {
+      *nbMonteCarlo = atoi(argv[i]);
+      hasFrames = 1;
+    } else if (strcmp(arg, "--max-iter") == 0) {
+      *maxDecoderIterations = atoi(argv[i]);
+      hasMaxIter = 1;
+    } else if (strcmp(arg, "--code") == 0) {
+      strncpy(codeName, argv[i], codeNameLen - 1);
+      codeName[codeNameLen - 1] = '\0';
+      hasCode = 1;
+    } else if (strcmp(arg, "--alpha") == 0) {
+      *alpha = (float)atof(argv[i]);
+      hasAlpha = 1;
+    } else if (strcmp(arg, "--nb-frames") == 0) {
+      *nbFrames = atoi(argv[i]);
+    } else if (strcmp(arg, "--alpha-max") == 0) {
+      *alphaMax = (float)atof(argv[i]);
+      hasAlphaMax = 1;
+    } else if (strcmp(arg, "--alpha-min") == 0) {
+      *alphaMin = (float)atof(argv[i]);
+      hasAlphaMin = 1;
+    } else if (strcmp(arg, "--alpha-step") == 0) {
+      *alphaStep = (float)atof(argv[i]);
+      hasAlphaStep = 1;
+    } else {
+      fprintf(stderr, "Unknown option: %s\n", arg);
+      return 1;
+    }
+  }
+
+  if (!hasFrames || !hasMaxIter || !hasCode || !hasAlpha) {
+    fprintf(stderr, "Missing required options in named mode.\n");
+    PrintUsage(argv[0]);
+    return 1;
+  }
+
+  if (!hasAlphaMax) *alphaMax = *alpha;
+  if (!hasAlphaMin) *alphaMin = *alpha - 1.0f;
+  if (!hasAlphaStep) *alphaStep = 1.0f;
+
+  return 0;
+}
+
+/* Create all intermediate directories in path (POSIX-style or Windows). */
+static void EnsureDir(const char *path)
+{
+  char tmp[512];
+  char *p;
+
+  strncpy(tmp, path, sizeof(tmp) - 1);
+  tmp[sizeof(tmp) - 1] = '\0';
+
+  for (p = tmp + 1; *p; p++) {
+    if (*p == '/' || *p == '\\') {
+      char c = *p;
+      *p = '\0';
+      _mkdir(tmp);
+      *p = c;
+    }
+  }
+  _mkdir(tmp);
+}
+
+#if AS_ML_MODE
+extern long long dbg_stagnation_events;
+extern long long dbg_as_matched;
+extern long long dbg_ml_fired;
+extern long long dbg_ml_escaped;
+
+static void AppendMlOutcomeSummaryCsvPerAlpha(
+  const char *csvPath,
+  const char *resultFile,
+  int nbMonteCarlo,
+  int maxDecoderIterations,
+  int nbFramesStop,
+  float alphaValue,
+  float alphaMax,
+  float alphaMin,
+  float alphaStep,
+  long long framesTested,
+  long long framesDecodedClean,
+  long long framesBaselineOnlyDecoded,
+  long long framesMlNeeded,
+  long long framesMlEffective,
+  long long framesMlNotEffective,
+  long long stagnationEvents,
+  long long mlCalls,
+  long long mlEscapes)
+{
+  FILE *f;
+  int csvExists;
+  double effectivenessPct;
+
+  if (csvPath == NULL || resultFile == NULL) {
+    return;
+  }
+
+  csvExists = (access(csvPath, 0) == 0);
+  f = fopen(csvPath, "a");
+  if (f == NULL) {
+    fprintf(stderr, "WARNING: cannot open ML summary CSV: %s\n", csvPath);
+    return;
+  }
+
+  if (!csvExists) {
+    fprintf(f,
+      "result_file,nb_monte_carlo,max_iterations,nbframes_stop,"
+      "alpha,alpha_max,alpha_min,alpha_step,"
+      "frames_tested,frames_decoded_clean,frames_baseline_only_decoded,"
+      "frames_ml_needed,frames_ml_effective,frames_ml_not_effective,"
+      "ml_effectiveness_pct,stagnation_events,ml_calls,ml_escapes\n");
+  }
+
+  effectivenessPct = (framesMlNeeded > 0)
+    ? (100.0 * (double)framesMlEffective / (double)framesMlNeeded)
+    : 0.0;
+
+  fprintf(f,
+    "%s,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%lld,%lld,%lld,%lld,%lld,%lld,%.6f,%lld,%lld,%lld\n",
+    resultFile,
+    nbMonteCarlo,
+    maxDecoderIterations,
+    nbFramesStop,
+    alphaValue,
+    alphaMax,
+    alphaMin,
+    alphaStep,
+    framesTested,
+    framesDecodedClean,
+    framesBaselineOnlyDecoded,
+    framesMlNeeded,
+    framesMlEffective,
+    framesMlNotEffective,
+    effectivenessPct,
+    stagnationEvents,
+    mlCalls,
+    mlEscapes);
+
+  fclose(f);
+}
+#endif
+
+int main(int argc, char *argv[])
+{
+  SparseMatrixData matrix;
+  BaseMatrixData base;
+  EncodingTransformData encoding;
+
+  FILE *fout = NULL;
+  char codeName[256];
+  char matrixFilePath[512];
+  char baseMatrixPrefix[512];
+  char resultDir[512];
+  char resultFileName[512];
+#if AS_ML_MODE
+  char mlSummaryCsvPath[512];
+#endif
+  const char *runType;
+
+  int NbMonteCarlo;
+  int maxDecoderIterations;
+  int NBframes;
+  int nb;
+
+  float alpha;
+  float alpha_max;
+  float alpha_min;
+  float alpha_step;
+
+  int *codeword = NULL;
+  int *receivedword = NULL;
+  int *workVector = NULL;
+  int *decodedBits = NULL;
+  int *bitEnergy = NULL;
+  int *checkNodeSyndrome = NULL;
+  int *layerVariableBuffer = NULL;
+  int *shiftedLayerVariableBuffer = NULL;
+
+  long long overallFramesTested = 0;
+  long long overallFramesDecodedClean = 0;
+#if AS_ML_MODE
+  long long overallFramesBaselineOnlyDecoded = 0;
+  long long overallFramesMlNeeded = 0;
+  long long overallFramesMlEffective = 0;
+  long long overallFramesMlNotEffective = 0;
+#endif
+
+  if (argc > 1 && strncmp(argv[1], "--", 2) == 0) {
+    if (ParseNamedArgs(
+          argc,
+          argv,
+          &NbMonteCarlo,
+          &maxDecoderIterations,
+          codeName,
+          (int)sizeof(codeName),
+          &alpha,
+          &NBframes,
+          &alpha_max,
+          &alpha_min,
+          &alpha_step) != 0) {
+      return 1;
+    }
+  } else {
+    if (argc < 5) {
+      PrintUsage(argv[0]);
+      return 1;
+    }
+
+    NbMonteCarlo = atoi(argv[1]);
+    maxDecoderIterations = atoi(argv[2]);
+    strncpy(codeName, argv[3], sizeof(codeName) - 1);
+    codeName[sizeof(codeName) - 1] = '\0';
+    alpha = (float)atof(argv[4]);
+    NBframes = (argc > 5) ? atoi(argv[5]) : 0;
+    alpha_max = (argc > 6) ? (float)atof(argv[6]) : alpha;
+    alpha_min = (argc > 7) ? (float)atof(argv[7]) : (alpha - 1.0f);
+    alpha_step = (argc > 8) ? (float)atof(argv[8]) : 1.0f;
+  }
+
+  snprintf(matrixFilePath, sizeof(matrixFilePath), "codes/%s/%s_Dform", codeName, codeName);
+  snprintf(baseMatrixPrefix, sizeof(baseMatrixPrefix), "codes/%s/%s_Base", codeName, codeName);
+
+  if (NbMonteCarlo <= 0) {
+    fprintf(stderr, "NbMonteCarlo must be > 0\n");
+    return 1;
+  }
+  if (maxDecoderIterations <= 0) {
+    fprintf(stderr, "NbIter must be > 0\n");
+    return 1;
+  }
+  if (alpha < 0.0f || alpha > 1.0f) {
+    fprintf(stderr, "alpha must be in [0, 1]\n");
+    return 1;
+  }
+  if (alpha_step <= 0.0f) {
+    fprintf(stderr, "alpha_step must be > 0\n");
+    return 1;
+  }
+
+  if (LoadSparseMatrixData(matrixFilePath, &matrix) != 0) {
+    return 1;
+  }
+
+  if (LoadBaseMatrixData(baseMatrixPrefix, &base) != 0) {
+    FreeSparseMatrixData(&matrix);
+    return 1;
+  }
+
+  if (BuildEncodingTransformFromSparseMatrix(&matrix, &encoding) != 0) {
+    FreeBaseMatrixData(&base);
+    FreeSparseMatrixData(&matrix);
+    return 1;
+  }
+
+  printf("Matrix Loaded\n");
+  printf("Graph Built\n");
+  printf("Base Matrix Loaded\n");
+  printf("Encoding Transform Built\n");
+  printf("BaseRows=%d, BaseCols=%d, Circulant=%d\n", base.RowBlockCount, base.ColBlockCount, base.CirculantSize);
+  printf("EncodingRank=%d\n", encoding.Rank);
+  printf("\n");
+  printf("Base Matrix:\n");
+  {
+    int m;
+    int k;
+    for (m = 0; m < base.RowBlockCount; m++) {
+      for (k = 0; k < base.ColBlockCount; k++) {
+        printf("%d  ", base.ShiftMatrix[m][k]);
+      }
+      printf("\n");
+    }
+  }
+
+#if GDBF
+  printf("-------------------------La-GDBF--------------------------------------------------\n");
+#endif
+
+#if PGDBF
+  printf("-------------------------La-P-GDBF--------------------------------------------------\n");
+#endif
+
+#if AS_COLLECT_MODE
+  runType = "collect";
+#elif AS_ML_MODE
+  runType = "ml";
+#else
+  runType = "baseline";
+#endif
+  snprintf(resultDir, sizeof(resultDir), "results/%s/%s", codeName, runType);
+  EnsureDir(resultDir);
+  snprintf(resultFileName, sizeof(resultFileName), "%s/simulation.res", resultDir);
+#if AS_ML_MODE
+  snprintf(mlSummaryCsvPath, sizeof(mlSummaryCsvPath), "%s/ml_outcome_summary.csv", resultDir);
+#endif
+
+  fout = fopen(resultFileName, "a+");
+  if (fout == NULL) {
+    fprintf(stderr, "Output file %s error!.. Abort\n", resultFileName);
+    FreeEncodingTransformData(&encoding);
+    FreeBaseMatrixData(&base);
+    FreeSparseMatrixData(&matrix);
+    return 1;
+  }
+
+  PrintStatsHeader(fout);
+
+  workVector = (int *)calloc(matrix.N, sizeof(int));
+  codeword = (int *)calloc(matrix.N, sizeof(int));
+  receivedword = (int *)calloc(matrix.N, sizeof(int));
+  decodedBits = (int *)calloc(matrix.N, sizeof(int));
+  bitEnergy = (int *)calloc(matrix.N, sizeof(int));
+  checkNodeSyndrome = (int *)calloc(base.CirculantSize, sizeof(int));
+  layerVariableBuffer = (int *)calloc(base.CirculantSize, sizeof(int));
+  shiftedLayerVariableBuffer = (int *)calloc(base.CirculantSize, sizeof(int));
+
+#if AS_COLLECT_MODE
+  {
+    char datasetDir[512];
+    char datasetPath[512];
+    int datasetExists;
+    snprintf(datasetDir, sizeof(datasetDir), "datasets/%s", codeName);
+    EnsureDir(datasetDir);
+    snprintf(datasetPath, sizeof(datasetPath), "%s/dataset.csv", datasetDir);
+    datasetExists = (access(datasetPath, 0) == 0);
+    datasetFile = fopen(datasetPath, "a");
+    if (!datasetFile) {
+        printf("ERROR opening dataset file\n");
+        return 1;
+    }
+    if (!datasetExists)
+        fprintf(datasetFile, "E0,E1,E2,E3,E4,E5,F0,F1,F2,F3,F4,F5,L0,L1,L2,L3,L4,L5\n");
+  }
+#endif
+
+  if (workVector == NULL || codeword == NULL || receivedword == NULL || decodedBits == NULL ||
+      bitEnergy == NULL || checkNodeSyndrome == NULL || layerVariableBuffer == NULL || shiftedLayerVariableBuffer == NULL) {
+    fprintf(stderr, "Memory allocation failed for encoding/decoder buffers.\n");
+    free(workVector);
+    free(codeword);
+    free(receivedword);
+    free(decodedBits);
+    free(bitEnergy);
+    free(checkNodeSyndrome);
+    free(layerVariableBuffer);
+    free(shiftedLayerVariableBuffer);
+    fclose(fout);
+    FreeEncodingTransformData(&encoding);
+    FreeBaseMatrixData(&base);
+    FreeSparseMatrixData(&matrix);
+    return 1;
+  }
+
+  srand(RAND_SEED);
+
+  for (alpha = alpha_max; alpha > alpha_min; alpha -= alpha_step) {
+    SimulationStats stats;
+#if AS_ML_MODE
+    long long alphaFramesTested = 0;
+    long long alphaFramesDecodedClean = 0;
+    long long alphaFramesBaselineOnlyDecoded = 0;
+    long long alphaFramesMlNeeded = 0;
+    long long alphaFramesMlEffective = 0;
+    long long alphaFramesMlNotEffective = 0;
+    long long alphaStagnationBefore = dbg_stagnation_events;
+    long long alphaMlCallsBeforeAll = dbg_ml_fired;
+    long long alphaMlEscapesBeforeAll = dbg_ml_escaped;
+#endif
+    ResetSimulationStats(&stats);
+
+    for (nb = 0; nb < NbMonteCarlo; nb++) {
+      int isCodeword;
+      int usedIterations;
+      int frameBitErrors;
+    #if AS_ML_MODE
+      long long mlCallsBefore = dbg_ml_fired;
+      long long mlEscapesBefore = dbg_ml_escaped;
+    #endif
+
+      EncodeRandomCodeword(
+        encoding.Rank,
+        matrix.N,
+        encoding.SystematicMatrix,
+        encoding.ColumnPermutation,
+        workVector,
+        codeword);
+
+      AddBscNoise(codeword, receivedword, matrix.N, alpha);
+
+      if (DecodeFrameGdbf(
+            &base,
+            receivedword,
+            codeword,
+            matrix.N,
+            maxDecoderIterations,
+            decodedBits,
+            bitEnergy,
+            checkNodeSyndrome,
+            layerVariableBuffer,
+            shiftedLayerVariableBuffer,
+            &isCodeword,
+            &usedIterations,
+            &frameBitErrors) != 0) {
+        fprintf(stderr, "Decoder error.\n");
+        free(workVector);
+        free(codeword);
+        free(receivedword);
+        free(decodedBits);
+        free(bitEnergy);
+        free(checkNodeSyndrome);
+        free(layerVariableBuffer);
+        free(shiftedLayerVariableBuffer);
+        fclose(fout);
+        FreeEncodingTransformData(&encoding);
+        FreeBaseMatrixData(&base);
+        FreeSparseMatrixData(&matrix);
+        return 1;
+      }
+
+      {
+        int cleanDecoded = (isCodeword && frameBitErrors == 0);
+        overallFramesTested++;
+#if AS_ML_MODE
+        alphaFramesTested++;
+#endif
+        if (cleanDecoded) {
+          overallFramesDecodedClean++;
+#if AS_ML_MODE
+          alphaFramesDecodedClean++;
+#endif
+        }
+
+#if AS_ML_MODE
+        {
+          long long frameMlCalls = dbg_ml_fired - mlCallsBefore;
+          long long frameMlEscapes = dbg_ml_escaped - mlEscapesBefore;
+
+          if (frameMlCalls > 0) {
+            overallFramesMlNeeded++;
+            alphaFramesMlNeeded++;
+            if (cleanDecoded && frameMlEscapes > 0) {
+              overallFramesMlEffective++;
+              alphaFramesMlEffective++;
+            } else {
+              overallFramesMlNotEffective++;
+              alphaFramesMlNotEffective++;
+            }
+          } else if (cleanDecoded) {
+            overallFramesBaselineOnlyDecoded++;
+            alphaFramesBaselineOnlyDecoded++;
+          }
+        }
+#endif
+      }
+
+      UpdateSimulationStats(&stats, frameBitErrors, isCodeword, usedIterations, maxDecoderIterations);
+
+      if (stats.nbtestedframes % 1000000 == 0) {
+        PrintStatsLine(alpha, &stats, matrix.N, fout);
+      }
+
+      if (NBframes > 0 && stats.NbTotalErrors == NBframes) {
+        break;
+      }
+    }
+
+    PrintStatsLine(alpha, &stats, matrix.N, fout);
+
+#if AS_ML_MODE
+    AppendMlOutcomeSummaryCsvPerAlpha(
+      mlSummaryCsvPath,
+      resultFileName,
+      NbMonteCarlo,
+      maxDecoderIterations,
+      NBframes,
+      alpha,
+      alpha_max,
+      alpha_min,
+      alpha_step,
+      alphaFramesTested,
+      alphaFramesDecodedClean,
+      alphaFramesBaselineOnlyDecoded,
+      alphaFramesMlNeeded,
+      alphaFramesMlEffective,
+      alphaFramesMlNotEffective,
+      dbg_stagnation_events - alphaStagnationBefore,
+      dbg_ml_fired - alphaMlCallsBeforeAll,
+      dbg_ml_escaped - alphaMlEscapesBeforeAll);
+#endif
+  }
+
+  free(workVector);
+  free(codeword);
+  free(receivedword);
+  free(decodedBits);
+  free(bitEnergy);
+  free(checkNodeSyndrome);
+  free(layerVariableBuffer);
+  free(shiftedLayerVariableBuffer);
+
+  fclose(fout);
+  FreeEncodingTransformData(&encoding);
+  FreeBaseMatrixData(&base);
+  FreeSparseMatrixData(&matrix);
+
+  if (datasetFile) fclose(datasetFile);
+
+#if AS_ML_MODE
+  printf("\n=== ML Escape Diagnostics ===\n");
+  printf("  Stagnation events detected : %lld\n", dbg_stagnation_events);
+  printf("  ML predict() calls         : %lld\n", dbg_ml_fired);
+  printf("  ML escapes applied         : %lld\n", dbg_ml_escaped);
+
+  if (overallFramesTested > 0) {
+    printf("\n=== Frame-Level Outcome Summary ===\n");
+    printf("  Frames tested                          : %lld\n", overallFramesTested);
+    printf("  Frames decoded clean                   : %lld\n", overallFramesDecodedClean);
+    printf("  Decoded by baseline GDBF only          : %lld\n", overallFramesBaselineOnlyDecoded);
+    printf("  Trap frames where ML was needed        : %lld\n", overallFramesMlNeeded);
+    printf("  Trap frames where ML escape was useful : %lld\n", overallFramesMlEffective);
+    printf("  Trap frames where ML did not help      : %lld\n", overallFramesMlNotEffective);
+    printf("  ML effectiveness on trap frames        : %.2f%%\n",
+           (overallFramesMlNeeded > 0)
+             ? (100.0 * (double)overallFramesMlEffective / (double)overallFramesMlNeeded)
+             : 0.0);
+  }
+
+  printf("  CSV summary written to               : %s\n", mlSummaryCsvPath);
+#endif
+
+  return 0;
+}
