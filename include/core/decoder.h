@@ -3,6 +3,8 @@
 
 #include "common.h"
 
+#define X_LENGTH(codeLength, base) ((base)->ColBlockCount * (base)->CirculantSize - (base)->RowBlockCount * (base)->CirculantSize)
+
 int DecodeFrameGdbf(
   const BaseMatrixData *base,
   const int *receivedword,

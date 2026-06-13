@@ -14,4 +14,8 @@ void EncodeRandomCodeword(
   int *workVector,
   int *codeword);
 
+void EncodeSplitCodeword(
+  const SparseMatrixData *matrix,
+  const int *x,
+  int *codeword);
 #endif
