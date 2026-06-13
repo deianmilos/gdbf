@@ -1,0 +1,60 @@
+{
+  "output_dir": "visualize/plots/irisc_dv3_50it_random",
+  "dpi": 450,
+  "font_size": 11,
+  "smooth_curves": true,
+  "fit_mode": "poly",
+  "poly_degree": 2,
+  "interp_points": 200,
+  "smooth_window": 7,
+  "show_raw_markers": true,
+  "failed_bits_hist_metrics": ["avg"],
+  "titles": {
+    "fer": "IRISC_P_dv3_R050_L54_N1296: FER Comparison",
+    "ber": "IRISC_P_dv3_R050_L54_N1296: BER Comparison",
+    "iter": "IRISC_P_dv3_R050_L54_N1296: Average Iteration Comparison",
+    "failed_bits": "IRISC_P_dv3_R050_L54_N1296: Remaining Uncorrected Bits (Min/Avg/Max)"
+  },
+  "fer_filename": "fer_all_models.png",
+  "ber_filename": "ber_all_models.png",
+  "iter_filename": "iter_all_models.png",
+  "failed_bits_filename": "failed_bits_all_models.png",
+  "models": [
+    {
+      "name": "pgdbf",
+      "label": "PGDBF",
+      "path": "results/IRISC_P_dv3_R050_L54_N1296/pgdbf/simulation.res",
+      "color": "#444444",
+      "linestyle": "--",
+      "marker": "s",
+      "markerfacecolor": "white"
+    },
+    {
+      "name": "ml",
+      "label": "ML",
+      "path": "results/IRISC_P_dv3_R050_L54_N1296/ml/simulation.res",
+      "color": "#B22222",
+      "linestyle": "-.",
+      "marker": "^",
+      "markerfacecolor": "white"
+    },
+    {
+      "name": "feedback_shift",
+      "label": "Feedback Shift",
+      "path": "results/IRISC_P_dv3_R050_L54_N1296/feedback_shift/simulation.res",
+      "color": "#1F77B4",
+      "linestyle": "-",
+      "marker": "D",
+      "markerfacecolor": "white"
+    },
+    {
+      "name": "ml_feedback",
+      "label": "ML + Feedback",
+      "path": "results/IRISC_P_dv3_R050_L54_N1296/ml_feedback/simulation.res",
+      "color": "#2E8B57",
+      "linestyle": "-",
+      "marker": "v",
+      "markerfacecolor": "white"
+    }
+  ]
+}

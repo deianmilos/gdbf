@@ -63,6 +63,18 @@ def rows_to_series(rows):
     }
 
 
+def filter_positive_fer(alphas, fers):
+    filtered_alpha = []
+    filtered_fer = []
+
+    for alpha, fer in zip(alphas, fers):
+        if fer > 0:
+            filtered_alpha.append(alpha)
+            filtered_fer.append(fer)
+
+    return filtered_alpha, filtered_fer
+
+
 def apply_publication_style():
     plt.rcParams.update(
         {
@@ -87,8 +99,12 @@ def apply_publication_style():
 
 
 def smooth_fer_curve(alphas, fers, interp_points=350, smooth_window=11):
-    x = np.asarray(alphas, dtype=float)
-    y = np.asarray(fers, dtype=float)
+    x, y = filter_positive_fer(alphas, fers)
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+
+    if x.size == 0:
+        return x, y
 
     if x.size < 2:
         return x, np.clip(y, 1e-15, None)
@@ -131,11 +147,14 @@ def make_plot(
     baseline = rows_to_series(baseline_rows)
     ml = rows_to_series(ml_rows)
 
+    baseline_x, baseline_y = filter_positive_fer(baseline["alpha"], baseline["fer"])
+    ml_x, ml_y = filter_positive_fer(ml["alpha"], ml["fer"])
+
     base_x_s, base_y_s = smooth_fer_curve(
-        baseline["alpha"], baseline["fer"], interp_points=interp_points, smooth_window=smooth_window
+        baseline_x, baseline_y, interp_points=interp_points, smooth_window=smooth_window
     )
     ml_x_s, ml_y_s = smooth_fer_curve(
-        ml["alpha"], ml["fer"], interp_points=interp_points, smooth_window=smooth_window
+        ml_x, ml_y, interp_points=interp_points, smooth_window=smooth_window
     )
 
     apply_publication_style()
@@ -169,8 +188,8 @@ def make_plot(
 
     if show_raw:
         ax.scatter(
-            baseline["alpha"],
-            baseline["fer"],
+            baseline_x,
+            baseline_y,
             s=18,
             marker="x",
             alpha=0.7,
@@ -178,8 +197,8 @@ def make_plot(
             label="Baseline raw",
         )
         ax.scatter(
-            ml["alpha"],
-            ml["fer"],
+            ml_x,
+            ml_y,
             s=18,
             marker="o",
             alpha=0.7,

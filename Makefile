@@ -1,9 +1,65 @@
 CC      = gcc
-CFLAGS  = -Iinclude -O2 -lm
-SRCS    = sim/main.c sim/matrix_io.c sim/encoding.c sim/channel.c sim/decoder.c sim/stats.c
-ASRCS   = absorbing_sets/enum/as_enum_main.c absorbing_sets/enum/as_enum.c sim/matrix_io.c sim/encoding.c
+CFLAGS  = -Iinclude \
+          -Iinclude/common \
+          -Iinclude/core \
+          -Iinclude/feedback \
+          -Iinclude/ml \
+          -Iinclude/framework \
+          -Iinclude/config \
+          -Iinclude/stats \
+          -O2 -lm
+SRCS    = src/app/main.c \
+          src/core/matrix_io.c \
+          src/core/encoding.c \
+          src/core/channel.c \
+          src/core/decoder.c \
+          src/core/stagnation_detection.c \
+          src/feedback/decoder_feedback_shift.c \
+          src/feedback/decoder_receiver.c \
+          src/ml/decoder_ml.c \
+          src/ml/decoder_perturb.c \
+          src/ml/candidate_selection.c \
+          src/ml/feature_extractor.c \
+          src/ml/labeling_strategy.c \
+          src/config/decoder_config.c \
+          src/stats/stats.c \
+          src/framework/decoder_framework.c
+CFLAGS  = -Iinclude \
+          -Iinclude/common \
+          -Iinclude/core \
+          -Iinclude/feedback \
+          -Iinclude/ml \
+          -Iinclude/framework \
+          -Iinclude/config \
+          -Iinclude/stats \
+          -O2 -lm -Wno-unused-variable
 
-all: GDBF GDBF_COLLECT GDBF_ML AS_ENUM
+SRCS    = src/app/main.c \
+          src/core/matrix_io.c \
+          src/core/encoding.c \
+          src/core/channel.c \
+          src/core/decoder.c \
+          src/core/stagnation_detection.c \
+          src/feedback/decoder_feedback_shift.c \
+          src/feedback/decoder_receiver.c \
+          src/feedback/feedback_round.c \
+          src/ml/decoder_ml.c \
+          src/ml/decoder_perturb.c \
+          src/ml/candidate_selection.c \
+          src/ml/feature_extractor.c \
+          src/ml/labeling_strategy.c \
+          src/ml/ml_round.c \
+          src/config/decoder_config.c \
+          src/stats/stats.c \
+          src/framework/frame_setup.c \
+          src/framework/decoder_framework.c
+
+ASRCS   = absorbing_sets/enum/as_enum_main.c \
+          absorbing_sets/enum/as_enum.c \
+          src/core/matrix_io.c \
+          src/core/encoding.c
+
+all: GDBF GDBF_COLLECT AS_ENUM
 
 # Baseline GDBF decoder (no ML)
 GDBF: $(SRCS)
@@ -16,9 +72,9 @@ GDBF_COLLECT: $(SRCS)
 # Backward-compatible alias
 GDBF_TRAIN: GDBF_COLLECT
 
-# ML-inference build (AS_ML_MODE=1: reads model/as_model_quantized.h, flips bits)
-GDBF_ML: $(SRCS)
-	$(CC) $(CFLAGS) -DAS_ML_MODE=1 -o $@ $^
+# ML is runtime-selected via decoder config (`decoder_type = ml`).
+# Keep this alias so old commands still work.
+GDBF_ML: GDBF
 
 # Absorbing-set enumerator
 AS_ENUM: $(ASRCS)

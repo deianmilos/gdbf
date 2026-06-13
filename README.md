@@ -1,166 +1,227 @@
-# GDBF-ML: ML-Assisted LDPC Decoder
+# GDBF-FEEDBAKC-ML: QC-LDPC Decoder + ML Enhancement + Feedback Enhancement
 
-Layered GDBF decoder for QC-LDPC WiFiN rate-1/2 (N=648, M=324, Z=27), with an optional ML escape step for stuck states.
+This repository contains a QC-LDPC simulator with multiple decoder modes:
 
-## Repository Layout
+- Baseline GDBF
+- PGDBF
+- ML-assisted escape
+- Feedback-shift mode
 
-- `sim/`: C simulation and decoder logic
-- `include/`: C headers
-- `codes/`: QC-LDPC matrix files, one subdirectory per code (e.g. `wifin_r_1_2/`, `IRISC_dv3_R050_L54_N1296/`)
-- `model/`: generated C headers embedded by the decoder (code-specific quantized + float reference)
-- `training/`: Python training and export pipeline (PyTorch)
-- `datasets/`: generated training datasets, scoped per code (`datasets/<code>/dataset.csv`)
-- `results/`: simulation outputs, organized as `results/<code>/<run_type>/` where `<run_type>` is `baseline`, `ml`, or `collect`
-- `visualize/`: FER plotting scripts and output figures
+It also includes dataset collection, training, model export to C headers, and plotting scripts.
 
-## Requirements
+## 1) What You Need
 
-- GCC
-- Python 3
-- Python packages: `numpy`, `pandas`, `torch`, `matplotlib`
+### C toolchain
 
-## Build Binaries
+- GCC (MinGW on Windows works)
 
-Run from repository root.
+### Python
 
-```powershell
-gcc -Iinclude -O2                -o GDBF       sim/main.c sim/matrix_io.c sim/encoding.c sim/channel.c sim/decoder.c sim/stats.c -lm
-gcc -Iinclude -O2 -DAS_COLLECT_MODE=1 -o GDBF_COLLECT sim/main.c sim/matrix_io.c sim/encoding.c sim/channel.c sim/decoder.c sim/stats.c -lm
-gcc -Iinclude -O2 -DAS_ML_MODE=1    -o GDBF_ML    sim/main.c sim/matrix_io.c sim/encoding.c sim/channel.c sim/decoder.c sim/stats.c -lm
-```
+- Python 3.10+
+- Recommended packages:
+  - numpy
+  - pandas
+  - torch
+  - matplotlib
 
-- `GDBF`: baseline only
-- `GDBF_COLLECT`: dataset collection mode
-- `GDBF_ML`: ML-assisted decoding
-
-## Reproducible End-to-End Workflow
-
-1. Activate environment
+Install Python packages:
 
 ```powershell
-conda activate gdbf-ml
+python -m pip install numpy pandas torch matplotlib
 ```
 
-2. Generate training dataset
+## 2) Repository Layout (Important Paths)
 
-Single alpha:
-```powershell
-.\\GDBF_COLLECT.exe --frames 200000 --max-iter 100 --code wifin_r_1_2 --alpha 0.025
-```
+- `src/` C source code used for current builds
+- `include/` headers
+- `configs/decoder/` runtime decoder configuration files
+- `codes/<code_name>/` parity/check matrix data per code
+- `datasets/<code_name>/dataset.csv` collected training data
+- `training/` ML training + export scripts
+- `model/` generated model headers used by C decoder
+- `results/<code_name>/<run_type>/simulation.res` simulation outputs
+- `visualize/` plotting scripts
 
-Multi-alpha (appends to same dataset):
-```powershell
-.\\GDBF_COLLECT.exe --frames 200000 --max-iter 100 --code wifin_r_1_2 --alpha 0 --nb-frames 0 --alpha-max 0.010 --alpha-min 0.003 --alpha-step 0.001
-```
-
-Outputs to `results/wifin_r_1_2/collect/simulation.res` and `datasets/wifin_r_1_2/dataset.csv`.
-
-3. Train model and export model headers
-
-Default code (wifin_r_1_2):
-```powershell
-conda run -n gdbf-ml python training/train.py
-```
-
-Specify a different code:
-```powershell
-conda run -n gdbf-ml python training/train.py --code IRISC_dv4_R050_L54_N1296
-```
-
-Training exports exactly two model headers (code-specific), for example:
-
-- `model/as_model_wifin_r_1_2_quantized.h`
-- `model/as_model_wifin_r_1_2_ref.h`
-
-The decoder includes a code-specific quantized header in `sim/decoder.c`.
-If you train another code, update that include to the matching `as_model_<code>_quantized.h` file.
-
-4. Rebuild ML decoder after export
+## 3) Build
 
 ```powershell
-gcc -Iinclude -O2 -DAS_ML_MODE=1 -o GDBF_ML sim/main.c sim/matrix_io.c sim/encoding.c sim/channel.c sim/decoder.c sim/stats.c -lm
+gcc -Iinclude -Iinclude/common -Iinclude/core -Iinclude/feedback -Iinclude/ml -Iinclude/framework -Iinclude/config -Iinclude/stats -O2 -Wno-unused-variable -o GDBF src/app/main.c src/core/matrix_io.c src/core/encoding.c src/core/channel.c src/core/decoder.c src/core/stagnation_detection.c src/feedback/decoder_feedback_shift.c src/feedback/decoder_receiver.c src/feedback/feedback_round.c src/ml/decoder_ml.c src/ml/decoder_perturb.c src/ml/candidate_selection.c src/ml/feature_extractor.c src/ml/labeling_strategy.c src/ml/ml_round.c src/config/decoder_config.c src/stats/stats.c src/framework/frame_setup.c src/framework/decoder_framework.c -lm
 ```
 
-5. Run baseline and ML with the same sweep
+
+## 4) Check CLI Help
 
 ```powershell
-.\\GDBF.exe    --frames 10000000 --max-iter 100 --code wifin_r_1_2 --alpha 0 --nb-frames 100 --alpha-max 0.010 --alpha-min 0.003 --alpha-step 0.001
-.\\GDBF_ML.exe --frames 10000000 --max-iter 100 --code wifin_r_1_2 --alpha 0 --nb-frames 100 --alpha-max 0.010 --alpha-min 0.003 --alpha-step 0.001
-```
-Results land in `results/wifin_r_1_2/baseline/` and `results/wifin_r_1_2/ml/` respectively.
-
-6. Plot FER comparison
-
-```powershell
-conda run -n gdbf-ml python visualize/plot_results.py --baseline results/wifin_r_1_2/baseline/simulation.res --ml results/wifin_r_1_2/ml/simulation.res --output visualize/plots/wifin_r_1_2/fer_comparison.png --title "FER Comparison: Baseline vs ML"
+.\GDBF.exe --help
 ```
 
-## Decoder CLI Arguments
-
-Binary format (recommended named arguments):
+Named-argument mode:
 
 ```text
---frames <N> --max-iter <N> --code <CodeName> --alpha <A> [--nb-frames <N>] [--alpha-max <A>] [--alpha-min <A>] [--alpha-step <A>]
+--frames <N> --max-iter <N> [--code <CodeName>] --alpha <A>
+[--nb-frames <N>] [--alpha-max <A>] [--alpha-min <A>] [--alpha-step <A>]
+[--decoder-config <path>] [--error-indexes <path>]
 ```
 
-- `frames`: max Monte Carlo frames per alpha point
-- `maxIter`: max decoding iterations per frame
-- `CodeName`: LDPC code folder name under `codes/` (e.g. `wifin_r_1_2`); the simulator auto-loads `codes/<CodeName>/<CodeName>_Dform` and `codes/<CodeName>/<CodeName>_Base`
-- `alpha`: single-point crossover probability (used when sweep args are omitted)
-- `NBframes`: stop after this many frame errors per alpha (`0` = no early stop)
-- `alpha_max`, `alpha_min`, `alpha_step`: sweep from high alpha down to low alpha
+Notes:
 
-Legacy positional mode is still supported for compatibility:
+- `--frames` and `--max-iter` are required.
+- `--alpha` is required unless you provide deterministic errors with `--error-indexes`.
+- You can still use positional mode, but named arguments are recommended.
 
-```text
-<frames> <maxIter> <CodeName> <alpha> [NBframes [alpha_max [alpha_min [alpha_step]]]]
-```
+## 5) Runtime Configuration
 
-Result files are written automatically to `results/<code>/<run_type>/simulation.res`. No output path argument is needed.
+The decoder reads configuration from a cfg file.
 
-Examples:
+Default file used in examples:
 
-- single alpha:
+- `configs/decoder/default.cfg`
+
+You can override config path per run:
 
 ```powershell
-.\\GDBF.exe --frames 10000000 --max-iter 100 --code wifin_r_1_2 --alpha 0.005 --nb-frames 200
+.\GDBF.exe ... --decoder-config configs/decoder/default.cfg
 ```
 
-- multi alpha:
+Common keys in cfg:
+
+- `code` (folder under `codes/`)
+- `decoder_type` = `gdbf` | `pgdbf` | `ml` | `feedback_shift` | `ml_feedback`
+- `collect` = 0/1
+- `candidate_selection` = `topk` | `graph` | `max_energy_checks`
+- `labeling_strategy` = `ground_truth` | `rollout` | `corrective_mask`
+- `candidate_k`
+- `feature_set` or `feature_list`
+
+Ready-to-use example configs are in `configs/decoder/`, including:
+
+- `baseline.cfg`
+- `pgdbf.cfg`
+- `best_ml_escape.cfg`
+- `best_ml_feedback.cfg`
+- `collect_top6_ground_truth.cfg`
+
+## 6) First Successful Run (Baseline)
+
+Use a known config and run one alpha point:
 
 ```powershell
-.\\GDBF.exe --frames 10000000 --max-iter 100 --code wifin_r_1_2 --alpha 0 --nb-frames 200 --alpha-max 0.010 --alpha-min 0.003 --alpha-step 0.001
+.\GDBF.exe --frames 5000 --max-iter 50 --alpha 0.006 --decoder-config configs/decoder/baseline.cfg
 ```
 
-## How ML Is Used During Decoding
+Result files are written under `results/<code_name>/baseline/`.
 
-When the decoder detects a stuck phase (stagnation or oscillation), it:
+## 7) Alpha Sweep Run
 
-1. selects 6 candidate bits,
-2. builds quantized features from energy and disagreement,
-3. calls `as_quantized_predict()` from the selected code-specific quantized model header,
-4. applies predicted flips and resumes normal GDBF iterations.
+```powershell
+.\GDBF.exe --frames 1000000 --max-iter 100 --alpha 0 --nb-frames 100 --alpha-max 0.010 --alpha-min 0.003 --alpha-step 0.001 --decoder-config configs/decoder/baseline.cfg
+```
 
-If no escape is applied, baseline max-energy flips continue.
+Tip: keep the same sweep settings when comparing baseline vs ML.
 
-## Outputs You Should Expect
+## 8) Run Modes
 
-1. FER result file (one per run, path depends on code and run type):
+Switch mode by changing cfg file (or `decoder_type` inside it), then run the same command pattern.
 
-- `results/<code>/baseline/simulation.res`
-- `results/<code>/ml/simulation.res`
-- `results/<code>/collect/simulation.res`
+### Baseline GDBF
 
-2. Per-alpha ML effectiveness CSV (written alongside the result file):
+- `decoder_type = gdbf`
+- `collect = 0`
 
-- `results/<code>/ml/ml_outcome_summary.csv`
+### PGDBF
 
-This CSV contains one row per alpha point, with:
+- `decoder_type = pgdbf`
+- tune `pgdbf_flip_probability`
 
-- frame totals and clean decodes,
-- baseline-only decoded frames,
-- trap frames needing ML,
-- ML-effective and ML-not-effective trap frames,
-- `stagnation_events`, `ml_calls`, `ml_escapes`.
+### ML-assisted decoding
 
+- `decoder_type = ml`
+- `collect = 0`
+- choose candidate + feature settings compatible with your trained model
 
+### Feedback-shift mode
+
+- `decoder_type = feedback_shift`
+- tune `feedback_trigger_iter` and related `feedback_*` keys
+
+### ML + Feedback hybrid mode (`ml_feedback`)
+
+- `decoder_type = ml_feedback`
+- this mode enables both ML rounds and feedback-shift rounds in the same decode loop
+
+Short behavior summary:
+
+- Decoder runs normal layered GDBF iterations.
+- On stuck states (or periodic trigger), ML proposes candidate flips and applies the mask when allowed by policy.
+- Feedback-shift rounds can also trigger (by `feedback_trigger_iter` and related settings), adding auxiliary parity-check energy guidance.
+- If neither ML nor feedback resolves the state, decoding continues with baseline perturbation steps.
+
+Use `configs/decoder/best_ml_feedback.cfg` as the starting profile.
+
+Example run:
+
+```powershell
+.\GDBF.exe --frames 200000 --max-iter 100 --alpha 0.012 --decoder-config configs/decoder/best_ml_feedback.cfg
+```
+
+## 9) Dataset Collection
+
+Set collect mode in cfg, for example `configs/decoder/collect_top6_ground_truth.cfg`.
+
+Then run:
+
+```powershell
+.\GDBF.exe --frames 200000 --max-iter 30 --alpha 0 --nb-frames 0 --alpha-max 0.020 --alpha-min 0.012 --alpha-step 0.003 --decoder-config configs/decoder/collect_top6_ground_truth.cfg
+```
+
+Output dataset:
+
+- `datasets/<code_name>/dataset.csv`
+
+## 10) Train and Export Model Headers
+
+Default training config:
+
+- `training/configs/default.json`
+
+Train:
+
+```powershell
+python training/train.py --config training/configs/default.json
+```
+
+Train for a specific code name:
+
+```powershell
+python training/train.py --code IRISC_dv4_R050_L54_N1296
+```
+
+Training exports headers into `model/`, including an active alias header used by runtime integration.
+
+After training/export, rebuild `GDBF` so the latest generated headers are compiled in.
+
+## 11) Plot FER Comparison
+
+Example baseline vs ML plot:
+
+```powershell
+python visualize/plot_results.py --baseline results/wifin_r_1_2/baseline/simulation.res --ml results/wifin_r_1_2/ml/simulation.res --output visualize/plots/wifin_r_1_2/fer_comparison.png --title "FER Comparison: Baseline vs ML"
+```
+
+## 12) Deterministic Error Injection (Optional)
+
+If you want fixed bit-error positions instead of random BSC errors, provide an index file:
+
+```powershell
+.\GDBF.exe --frames 1000 --max-iter 100 --code IRISC_P_dv3_R050_L54_N1296 --error-indexes codes/IRISC_P_dv3_R050_L54_N1296/error_indexes.txt --decoder-config configs/decoder/deterministic_errors_dv3.cfg
+```
+
+## 13) Minimal End-to-End 
+
+1. Build `GDBF`.
+2. Run baseline with `configs/decoder/baseline.cfg`.
+3. Run collect mode with `configs/decoder/collect_top6_ground_truth.cfg`.
+4. Train with `python training/train.py --config training/configs/default.json`.
+5. Rebuild `GDBF`.
+6. Run ML mode with `configs/decoder/best_ml_escape.cfg`.
+7. Plot baseline vs ML with `visualize/plot_results.py`.

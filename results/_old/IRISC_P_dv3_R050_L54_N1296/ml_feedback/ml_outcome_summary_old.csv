@@ -1,0 +1,4 @@
+result_file,nb_monte_carlo,max_iterations,nbframes_stop,alpha,alpha_max,alpha_min,alpha_step,frames_tested,frames_decoded_clean,frames_baseline_only_decoded,frames_ml_needed,frames_ml_escaped,frames_ml_no_escape,frames_ml_invoked_decoded_clean,ml_escape_effectiveness_pct,stagnation_events,ml_calls,ml_escapes
+results/IRISC_P_dv3_R050_L54_N1296/ml_feedback/simulation.res,10000000,100,200,0.020000,0.020000,-0.980000,1.000000,355498,355298,344808,10690,6672,4018,10490,62.413471,3807,22709,14903
+results/IRISC_P_dv3_R050_L54_N1296/ml_feedback/simulation.res,10000000,100,200,0.020000,0.020000,-0.980000,1.000000,355498,355298,344808,10690,6672,4018,10490,62.413471,3807,22709,14903
+results/IRISC_P_dv3_R050_L54_N1296/ml_feedback/simulation.res,10000000,30,200,0.020000,0.020000,-0.980000,1.000000,34302,34102,33259,1043,648,395,843,62.128476,197,1639,1034
