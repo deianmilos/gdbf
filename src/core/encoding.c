@@ -190,7 +190,7 @@ void EncodeRandomCodeword(int rank, int N, int **systematicMatrix, const int *co
   }
 
   for (k = rank; k < N; k++) {
-    workVector[k] = (int)floor(((double)(rand()) / RAND_MAX) * 2);
+    workVector[k] = rand() & 1;
   }
 
   for (k = rank - 1; k >= 0; k--) {
@@ -202,4 +202,35 @@ void EncodeRandomCodeword(int rank, int N, int **systematicMatrix, const int *co
   for (k = 0; k < N; k++) {
     codeword[columnPermutation[k]] = workVector[k];
   }
+}
+
+void EncodeSplitCodeword(
+    const SparseMatrixData *matrix,
+    const int *x,
+    int *codeword)
+{
+    int i, j;
+
+    int n = matrix->N - matrix->M;  // x length
+    int m = matrix->M;              // parity length
+
+    // copy x
+    for (i = 0; i < n; i++) {
+        codeword[i] = x[i];
+    }
+
+    // compute Hx
+    for (i = 0; i < m; i++) {
+        int parity = 0;
+
+        for (j = 0; j < matrix->RowDegree[i]; j++) {
+            int col = matrix->Mat[i][j];
+
+            if (col < n) {
+                parity ^= x[col];
+            }
+        }
+
+        codeword[n + i] = parity;
+    }
 }
