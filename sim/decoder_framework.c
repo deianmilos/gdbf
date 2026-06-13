@@ -967,10 +967,12 @@ int DecodeFrameWithConfig(
           {
             int infoColBlocks = (xLength + Z - 1) / Z;
             int shiftSourceRandom = (config->feedbackShiftSourceMode == 1);
+            int shiftSourceFixedNumber = (config->feedbackShiftSourceMode == 2);
+            const char *shiftModeLabel = shiftSourceRandom ? "random" : (shiftSourceFixedNumber ? "fixed_number" : "fixed");
 
             FEEDBACK_LOG(feedbackLogsEnabled,
                          "[sender_calc] layer=%d anchor-max target-shift (mode=%s, info_cols=%d, global_max_energy=%d)\n",
-                         bestLayer, shiftSourceRandom ? "random" : "fixed", infoColBlocks, maxEnergy);
+                         bestLayer, shiftModeLabel, infoColBlocks, maxEnergy);
 
             for (i = 0; i < targetRowCount; i++) {
               int row = targetRows[i];
@@ -1025,7 +1027,22 @@ int DecodeFrameWithConfig(
               int curShift = base->ShiftMatrix[row][targetCol];
 
               int chosenDelta;
-              if (shiftSourceRandom) {
+              if (shiftSourceFixedNumber) {
+                if (Z > 1) {
+                  chosenDelta = config->feedbackShiftFixedDelta % Z;
+                  if (chosenDelta == 0) {
+                    chosenDelta = 1;
+                  }
+                } else {
+                  chosenDelta = 0;
+                }
+                FEEDBACK_LOG(feedbackLogsEnabled,
+                             "[sender_calc] row=%d anchor_col=%d(unchanged) target_col=%d "
+                             "delta=%d (fixed_number=%d, cur_shift=%d->%d)\n",
+                             row, anchorCol, targetCol, chosenDelta,
+                             config->feedbackShiftFixedDelta,
+                             curShift, (curShift + chosenDelta) % Z);
+              } else if (shiftSourceRandom) {
                 if (Z > 1) {
                   chosenDelta = 1 + (rand() % (Z - 1));
                 } else {

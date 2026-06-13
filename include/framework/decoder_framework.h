@@ -38,7 +38,8 @@ typedef struct {
   int feedbackSenderStrictObservability;
   int feedbackLogsEnabled;
   int feedbackRowSelectionMode;  /* 0 = max severity (default), 1 = min non-zero severity */
-  int feedbackShiftSourceMode;   /* 0 = fixed (sat-check guided + fallback), 1 = random */
+  int feedbackShiftSourceMode;   /* 0 = fixed (sat-check guided + fallback), 1 = random, 2 = fixed-number */
+  int feedbackShiftFixedDelta;   /* used when feedbackShiftSourceMode == 2 */
   int mlInvokeOnlyIfBaselineFails;
   int mlPeriodicInterval;
   int errorIndexesLoggingEnabled;

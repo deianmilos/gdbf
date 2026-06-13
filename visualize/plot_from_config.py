@@ -7,6 +7,8 @@ from typing import Dict, List
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.colors import to_rgb
+import matplotlib.patches as mpatches
 
 
 LINE_RE = re.compile(
@@ -19,8 +21,7 @@ LINE_RE = re.compile(
 )
 
 FAILED_BITS_RE = re.compile(
-    r"\s+\d+\(\d+\)\s+"
-    r"(?P<failed_min>[0-9]*\.?[0-9]+)\/(?P<failed_avg>[0-9]*\.?[0-9]+)\/(?P<failed_max>[0-9]*\.?[0-9]+)"
+    r"(?P<failed_min>[0-9]*\.?[0-9]+)\/(?P<failed_avg>[0-9]*\.?[0-9]+)\/(?P<failed_max>[0-9]*\.?[0-9]+)\s*$"
 )
 
 
@@ -99,6 +100,22 @@ def apply_paper_style(font_size: int = 11) -> None:
     )
 
 
+FAILED_BITS_METRIC_MAP = {
+    "min": "failed_min",
+    "avg": "failed_avg",
+    "max": "failed_max",
+    "failed_min": "failed_min",
+    "failed_avg": "failed_avg",
+    "failed_max": "failed_max",
+}
+
+FAILED_BITS_METRIC_LABELS = {
+    "failed_min": "Minimum Uncorrected Bits",
+    "failed_avg": "Average Uncorrected Bits",
+    "failed_max": "Maximum Uncorrected Bits",
+}
+
+
 def metric_values(rows: List[ResultRow], metric: str) -> np.ndarray:
     if metric == "fer":
         return np.array([r.fer for r in rows], dtype=float)
@@ -113,6 +130,34 @@ def metric_values(rows: List[ResultRow], metric: str) -> np.ndarray:
     if metric == "failed_max":
         return np.array([r.failed_max for r in rows], dtype=float)
     raise ValueError(f"Unsupported metric: {metric}")
+
+
+def normalize_failed_bits_hist_metrics(raw_metrics: object) -> List[str]:
+    if raw_metrics is None:
+        return ["failed_avg"]
+
+    if isinstance(raw_metrics, str):
+        candidates = [raw_metrics]
+    elif isinstance(raw_metrics, list):
+        candidates = raw_metrics
+    else:
+        raise ValueError("failed_bits_hist_metrics must be a string or a list of strings")
+
+    normalized: List[str] = []
+    for item in candidates:
+        if not isinstance(item, str):
+            raise ValueError("Each failed_bits_hist_metrics entry must be a string")
+        key = item.strip().lower()
+        metric = FAILED_BITS_METRIC_MAP.get(key)
+        if metric is None:
+            raise ValueError(f"Unsupported failed bits histogram metric: {item}")
+        if metric not in normalized:
+            normalized.append(metric)
+
+    if not normalized:
+        raise ValueError("failed_bits_hist_metrics must contain at least one metric")
+
+    return normalized
 
 
 def filter_positive_fer(rows: List[ResultRow]) -> List[ResultRow]:
@@ -314,6 +359,149 @@ def plot_failed_bits_summary(
     plt.close(fig)
 
 
+def plot_failed_bits_histogram(
+    output_path: Path,
+    title: str,
+    model_rows: Dict[str, List[ResultRow]],
+    model_style: Dict[str, Dict[str, str]],
+    dpi: int,
+    hist_metrics: List[str],
+) -> None:
+    model_names = list(model_rows.keys())
+    if not model_names:
+        return
+
+    metric_to_alphas: Dict[str, List[float]] = {}
+    for metric in hist_metrics:
+        alpha_set = set()
+        for rows in model_rows.values():
+            for r in rows:
+                value = metric_values([r], metric)[0]
+                if np.isfinite(value) and value > 0:
+                    alpha_set.add(r.alpha)
+        metric_to_alphas[metric] = sorted(alpha_set, reverse=True)
+
+    if not any(metric_to_alphas.values()):
+        return
+
+    n_metrics = len(hist_metrics)
+    fig, axes = plt.subplots(
+        1,
+        n_metrics,
+        figsize=(max(9.0, 0.55 * max((len(v) for v in metric_to_alphas.values()), default=1) + 4.0, 6.2 * n_metrics), 5.2),
+        sharey=False,
+    )
+    if n_metrics == 1:
+        axes = [axes]
+
+    def muted_color(color_value: str | None) -> tuple[float, float, float]:
+        if color_value is None:
+            base = np.array([0.52, 0.56, 0.62], dtype=float)
+        else:
+            base = np.array(to_rgb(color_value), dtype=float)
+        neutral = np.array([0.86, 0.88, 0.92], dtype=float)
+        mixed = 0.45 * neutral + 0.55 * base
+        return tuple(np.clip(mixed, 0.0, 1.0))
+
+    for ax, metric in zip(axes, hist_metrics):
+        alphas = metric_to_alphas[metric]
+        if not alphas:
+            ax.set_visible(False)
+            continue
+
+        x = np.arange(len(alphas), dtype=float)
+        group_width = 0.82
+        width = group_width / max(1, len(model_names))
+        offset_left = -0.5 * group_width + 0.5 * width
+
+        ax.set_facecolor("#fbfcfe")
+
+        model_y_values: Dict[str, np.ndarray] = {}
+        model_containers = {}
+
+        for m_idx, model_name in enumerate(model_names):
+            rows = model_rows[model_name]
+            style = model_style[model_name]
+            y_by_alpha = {}
+
+            for r in rows:
+                v = metric_values([r], metric)[0]
+                if np.isfinite(v) and v > 0:
+                    y_by_alpha[r.alpha] = v
+
+            y = np.array([y_by_alpha.get(a, np.nan) for a in alphas], dtype=float)
+            model_y_values[model_name] = y
+            positions = x + offset_left + m_idx * width
+
+            container = ax.bar(
+                positions,
+                y,
+                width,
+                label=style.get("label", model_name),
+                color=muted_color(style.get("color", None)),
+                edgecolor="#7f8b98",
+                linewidth=0.85,
+                alpha=0.82,
+            )
+            model_containers[model_name] = container
+
+        # Emphasize the best model at each alpha (smallest value for the chosen metric).
+        for a_idx in range(len(alphas)):
+            best_model = None
+            best_value = None
+
+            for model_name in model_names:
+                v = model_y_values[model_name][a_idx]
+                if not np.isfinite(v):
+                    continue
+                if best_value is None or v < best_value:
+                    best_value = v
+                    best_model = model_name
+
+            if best_model is None:
+                continue
+
+            best_patch = model_containers[best_model].patches[a_idx]
+            best_patch.set_facecolor("#4169E1")
+            best_patch.set_linewidth(1.35)
+            best_patch.set_edgecolor("#27408B")
+            best_patch.set_alpha(1.0)
+
+            h = best_patch.get_height()
+            if np.isfinite(h):
+                ax.plot(
+                    best_patch.get_x() + best_patch.get_width() * 0.5,
+                    h,
+                    marker="D",
+                    markersize=3.8,
+                    color="#27408B",
+                    markerfacecolor="#4169E1",
+                    linestyle="None",
+                )
+
+        ax.set_title(FAILED_BITS_METRIC_LABELS.get(metric, metric))
+        ax.set_ylabel(FAILED_BITS_METRIC_LABELS.get(metric, metric))
+        ax.set_xlabel("Alpha")
+        ax.set_xticks(x)
+        ax.set_xticklabels([f"{a:.3f}" for a in alphas], rotation=45, ha="right")
+        ax.grid(True, axis="y", which="major", linestyle="--", linewidth=0.7)
+
+    if n_metrics == 1:
+        axes[0].set_title(title)
+    else:
+        fig.suptitle(title)
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    handles.append(mpatches.Patch(facecolor="#4169E1", edgecolor="#27408B", label="Best @ alpha"))
+    labels.append("Best @ alpha")
+    axes[0].legend(handles, labels, loc="upper right")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=dpi)
+    plt.close(fig)
+
+
 def load_config(path: Path) -> dict:
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
@@ -341,6 +529,7 @@ def main() -> None:
     interp_points = int(cfg.get("interp_points", 280))
     smooth_window = int(cfg.get("smooth_window", 9))
     show_raw_markers = bool(cfg.get("show_raw_markers", True))
+    failed_bits_hist_metrics = normalize_failed_bits_hist_metrics(cfg.get("failed_bits_hist_metrics", ["avg"]))
 
     models_cfg = cfg.get("models", [])
     if not models_cfg:
@@ -421,6 +610,15 @@ def main() -> None:
         model_rows=model_rows,
         model_style=model_style,
         dpi=dpi,
+    )
+
+    plot_failed_bits_histogram(
+        output_path=output_dir / cfg.get("failed_bits_hist_filename", "failed_bits_histogram.png"),
+        title=titles.get("failed_bits_hist", "Failed Bits by Alpha and Model"),
+        model_rows=model_rows,
+        model_style=model_style,
+        dpi=dpi,
+        hist_metrics=failed_bits_hist_metrics,
     )
 
     print(f"Saved FER/BER/Iter/FailedBits plots to: {output_dir.resolve()}")

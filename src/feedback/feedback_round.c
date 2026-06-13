@@ -223,10 +223,12 @@ FeedbackResult RunFeedbackRound(FrameState *fs)
           {
             int infoColBlocks    = (fs->xLength + Z - 1) / Z;
             int shiftSourceRandom = (fs->config->feedbackShiftSourceMode == 1);
+            int shiftSourceFixedNumber = (fs->config->feedbackShiftSourceMode == 2);
+            const char *shiftModeLabel = shiftSourceRandom ? "random" : (shiftSourceFixedNumber ? "fixed_number" : "fixed");
 
             FEEDBACK_LOG(fs->feedbackLogsEnabled,
                          "[sender_calc] layer=%d anchor-max target-shift (mode=%s, info_cols=%d, global_max_energy=%d)\n",
-                         bestLayer, shiftSourceRandom ? "random" : "fixed",
+                         bestLayer, shiftModeLabel,
                          infoColBlocks, fs->maxEnergy);
 
             for (i = 0; i < targetRowCount; i++) {
@@ -284,7 +286,22 @@ FeedbackResult RunFeedbackRound(FrameState *fs)
               curShift = fs->base->ShiftMatrix[row][targetCol];
 
               /* Compute shift delta */
-              if (shiftSourceRandom) {
+              if (shiftSourceFixedNumber) {
+                if (Z > 1) {
+                  chosenDelta = fs->config->feedbackShiftFixedDelta % Z;
+                  if (chosenDelta == 0) {
+                    chosenDelta = 1;
+                  }
+                } else {
+                  chosenDelta = 0;
+                }
+                FEEDBACK_LOG(fs->feedbackLogsEnabled,
+                             "[sender_calc] row=%d anchor_col=%d(unchanged) target_col=%d "
+                             "delta=%d (fixed_number=%d, cur_shift=%d->%d)\n",
+                             row, anchorCol, targetCol, chosenDelta,
+                             fs->config->feedbackShiftFixedDelta,
+                             curShift, (curShift + chosenDelta) % Z);
+              } else if (shiftSourceRandom) {
                 chosenDelta = (Z > 1) ? (1 + (rand() % (Z - 1))) : 0;
                 FEEDBACK_LOG(fs->feedbackLogsEnabled,
                              "[sender_calc] row=%d anchor_col=%d(unchanged) target_col=%d "

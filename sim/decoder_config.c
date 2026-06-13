@@ -121,7 +121,8 @@ void DecoderConfigInitDefaults(DecoderConfig *config)
   config->feedbackSenderStrictObservability = 0;
   config->feedbackLogsEnabled = 1;
   config->feedbackRowSelectionMode = 0;  /* 0 = max severity, 1 = min non-zero severity */
-  config->feedbackShiftSourceMode = 0;   /* 0 = fixed (default), 1 = random */
+  config->feedbackShiftSourceMode = 0;   /* 0 = fixed (default), 1 = random, 2 = fixed-number */
+  config->feedbackShiftFixedDelta = 1;
   config->mlInvokeOnlyIfBaselineFails = 1;
   config->mlPeriodicInterval = 0;
 
@@ -227,7 +228,12 @@ int DecoderConfigLoadFromFile(DecoderConfig *config, const char *filePath)
       else config->feedbackRowSelectionMode = 0;  /* default: max */
     } else if (StrEq(k, "feedback_shift_source_mode")) {
       if (StrEq(v, "random")) config->feedbackShiftSourceMode = 1;
+      else if (StrEq(v, "fixed_number")) {
+        config->feedbackShiftSourceMode = 2;
+      }
       else config->feedbackShiftSourceMode = 0;  /* default: fixed */
+    } else if (StrEq(k, "feedback_shift_fixed_delta")) {
+      config->feedbackShiftFixedDelta = atoi(v);
     } else if (StrEq(k, "ml_invoke_only_if_baseline_fails")) {
       config->mlInvokeOnlyIfBaselineFails = ParseBoolean(v, config->mlInvokeOnlyIfBaselineFails);
     } else if (StrEq(k, "ml_periodic_interval")) {
@@ -263,7 +269,10 @@ int DecoderConfigLoadFromFile(DecoderConfig *config, const char *filePath)
   if (config->feedbackPriorityFailW < 0) config->feedbackPriorityFailW = 0;
   if (config->feedbackShiftColumnsPerRow < 1) config->feedbackShiftColumnsPerRow = 1;
   if (config->feedbackShiftColumnsPerRow > 3) config->feedbackShiftColumnsPerRow = 3;
-  config->feedbackShiftSourceMode = (config->feedbackShiftSourceMode != 0) ? 1 : 0;
+  if (config->feedbackShiftSourceMode < 0) config->feedbackShiftSourceMode = 0;
+  if (config->feedbackShiftSourceMode > 2) config->feedbackShiftSourceMode = 2;
+  if (config->feedbackShiftFixedDelta < 1) config->feedbackShiftFixedDelta = 1;
+  if (config->feedbackShiftFixedDelta > 64) config->feedbackShiftFixedDelta = 64;
   if (config->mlPeriodicInterval < 0) config->mlPeriodicInterval = 0;
   if (config->stagnation.energyHistoryLen < 2) config->stagnation.energyHistoryLen = 2;
   if (config->pgdbfFlipProbability < 0.0) config->pgdbfFlipProbability = 0.0;
@@ -333,9 +342,13 @@ void DecoderConfigApplyEnv(DecoderConfig *config)
   config->feedbackSenderStrictObservability = ReadEnvInt("GDBF_FEEDBACK_SENDER_STRICT_OBSERVABILITY", config->feedbackSenderStrictObservability);
   config->feedbackLogsEnabled = ReadEnvInt("GDBF_FEEDBACK_LOGS", config->feedbackLogsEnabled);
   config->feedbackRowSelectionMode = ReadEnvInt("GDBF_FEEDBACK_ROW_SELECTION_MODE", config->feedbackRowSelectionMode);
+  config->feedbackShiftFixedDelta = ReadEnvInt("GDBF_FEEDBACK_SHIFT_FIXED_DELTA", config->feedbackShiftFixedDelta);
   {
     const char *shiftSourceMode = getenv("GDBF_FEEDBACK_SHIFT_SOURCE_MODE");
     if (StrEq(shiftSourceMode, "random")) config->feedbackShiftSourceMode = 1;
+    else if (StrEq(shiftSourceMode, "fixed_number")) {
+      config->feedbackShiftSourceMode = 2;
+    }
     else if (StrEq(shiftSourceMode, "fixed")) config->feedbackShiftSourceMode = 0;
     else config->feedbackShiftSourceMode = ReadEnvInt("GDBF_FEEDBACK_SHIFT_SOURCE_MODE", config->feedbackShiftSourceMode);
   }
@@ -389,7 +402,18 @@ void DecoderConfigApplyEnv(DecoderConfig *config)
   if (config->feedbackShiftColumnsPerRow > 3) {
     config->feedbackShiftColumnsPerRow = 3;
   }
-  config->feedbackShiftSourceMode = (config->feedbackShiftSourceMode != 0) ? 1 : 0;
+  if (config->feedbackShiftSourceMode < 0) {
+    config->feedbackShiftSourceMode = 0;
+  }
+  if (config->feedbackShiftSourceMode > 2) {
+    config->feedbackShiftSourceMode = 2;
+  }
+  if (config->feedbackShiftFixedDelta < 1) {
+    config->feedbackShiftFixedDelta = 1;
+  }
+  if (config->feedbackShiftFixedDelta > 64) {
+    config->feedbackShiftFixedDelta = 64;
+  }
   if (config->mlPeriodicInterval < 0) {
     config->mlPeriodicInterval = 0;
   }
