@@ -8,7 +8,6 @@ from typing import Dict, List
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import to_rgb
-import matplotlib.patches as mpatches
 
 
 LINE_RE = re.compile(
@@ -17,11 +16,8 @@ LINE_RE = re.compile(
     r"(?P<nber>\d+)\s*\((?P<ber>[0-9eE+\-.]+)\)\s+"
     r"(?P<nbfer>\d+)\s*\((?P<fer>[0-9eE+\-.]+)\)\s+"
     r"(?P<nbtested>\d+)\s+"
-    r"(?P<iter_avg>[0-9]*\.?[0-9]+)\((?P<iter_max>\d+)\)"
-)
-
-FAILED_BITS_RE = re.compile(
-    r"(?P<failed_min>[0-9]*\.?[0-9]+)\/(?P<failed_avg>[0-9]*\.?[0-9]+)\/(?P<failed_max>[0-9]*\.?[0-9]+)\s*$"
+    r"(?P<iter_avg>[0-9]*\.?[0-9]+)\((?P<iter_max>\d+)\)\s+"
+    r"(?P<failed_triplet>(?:[0-9]*\.?[0-9]+|-)/(?:[0-9]*\.?[0-9]+|-)/(?:[0-9]*\.?[0-9]+|-))"
 )
 
 
@@ -35,6 +31,23 @@ class ResultRow:
     failed_min: float
     failed_avg: float
     failed_max: float
+
+
+def parse_triplet_token(token: str) -> tuple[float, float, float]:
+    parts = token.split("/")
+    if len(parts) != 3:
+        return (float("nan"), float("nan"), float("nan"))
+
+    def parse_value(v: str) -> float:
+        s = v.strip()
+        if s == "-":
+            return float("nan")
+        try:
+            return float(s)
+        except ValueError:
+            return float("nan")
+
+    return (parse_value(parts[0]), parse_value(parts[1]), parse_value(parts[2]))
 
 
 def parse_res_file(path: Path) -> List[ResultRow]:
@@ -52,24 +65,22 @@ def parse_res_file(path: Path) -> List[ResultRow]:
                 continue
 
             alpha = float(m.group("alpha"))
-            failed_match = FAILED_BITS_RE.search(line)
+            failed_min, failed_avg, failed_max = parse_triplet_token(m.group("failed_triplet"))
             rows_by_alpha[alpha] = ResultRow(
                 alpha=alpha,
                 ber=float(m.group("ber")),
                 fer=float(m.group("fer")),
                 iter_avg=float(m.group("iter_avg")),
                 nbtested=int(m.group("nbtested")),
-                failed_min=float(failed_match.group("failed_min")) if failed_match else float("nan"),
-                failed_avg=float(failed_match.group("failed_avg")) if failed_match else float("nan"),
-                failed_max=float(failed_match.group("failed_max")) if failed_match else float("nan"),
+                failed_min=failed_min,
+                failed_avg=failed_avg,
+                failed_max=failed_max,
             )
 
     if not rows_by_alpha:
         raise ValueError(f"No valid rows parsed from: {path}")
 
     return [rows_by_alpha[a] for a in sorted(rows_by_alpha.keys(), reverse=True)]
-
-
 def apply_paper_style(font_size: int = 11) -> None:
     plt.rcParams.update(
         {
@@ -113,6 +124,7 @@ FAILED_BITS_METRIC_LABELS = {
     "failed_min": "Minimum Uncorrected Bits",
     "failed_avg": "Average Uncorrected Bits",
     "failed_max": "Maximum Uncorrected Bits",
+    "expected_failed_bits": "Failed Bits per Tested Frame",
 }
 
 
@@ -129,6 +141,8 @@ def metric_values(rows: List[ResultRow], metric: str) -> np.ndarray:
         return np.array([r.failed_avg for r in rows], dtype=float)
     if metric == "failed_max":
         return np.array([r.failed_max for r in rows], dtype=float)
+    if metric == "expected_failed_bits":
+        return np.array([r.fer * r.failed_avg for r in rows], dtype=float)
     raise ValueError(f"Unsupported metric: {metric}")
 
 
@@ -239,12 +253,12 @@ def plot_metric(
         if len(x) == 0:
             continue
 
-        if metric in {"fer", "ber"}:
+        if metric in {"fer", "ber", "expected_failed_bits"}:
             y = np.clip(y, 1e-15, None)
 
         x_plot = x
         y_plot = y
-        if smooth_curves and metric in {"fer", "ber"} and len(x) >= 2:
+        if smooth_curves and metric in {"fer", "ber", "expected_failed_bits"} and len(x) >= 2:
             if fit_mode == "poly":
                 x_plot, y_plot = poly_log_fit(x, y, degree=poly_degree, n_points=interp_points)
             else:
@@ -256,14 +270,14 @@ def plot_metric(
             label=style.get("label", model_name),
             color=style.get("color", None),
             linestyle=style.get("linestyle", "-"),
-            marker=(None if (smooth_curves and metric in {"fer", "ber"}) else style.get("marker", "o")),
+            marker=(None if (smooth_curves and metric in {"fer", "ber", "expected_failed_bits"}) else style.get("marker", "o")),
             linewidth=float(style.get("linewidth", 1.8)),
             markersize=float(style.get("markersize", 5.5)),
             markerfacecolor=style.get("markerfacecolor", "white"),
             markeredgewidth=float(style.get("markeredgewidth", 1.0)),
         )
 
-        if show_raw_markers and smooth_curves and metric in {"fer", "ber"}:
+        if show_raw_markers and smooth_curves and metric in {"fer", "ber", "expected_failed_bits"}:
             raw_x = x
             raw_y = y
             if metric == "fer":
@@ -280,7 +294,7 @@ def plot_metric(
                 alpha=0.85,
             )
 
-    if metric in {"fer", "ber"}:
+    if metric in {"fer", "ber", "expected_failed_bits"}:
         ax.set_yscale("log")
 
     ax.set_xlabel("Alpha")
@@ -308,6 +322,7 @@ def plot_failed_bits_summary(
     model_rows: Dict[str, List[ResultRow]],
     model_style: Dict[str, Dict[str, str]],
     dpi: int,
+    failed_bits_x_max: float | None = None,
 ) -> None:
     fig, axes = plt.subplots(1, 3, figsize=(13.0, 4.2), sharex=True)
     metrics = [
@@ -347,7 +362,8 @@ def plot_failed_bits_summary(
         ax.grid(True, which="minor", linestyle=":", linewidth=0.6)
 
         all_alphas = [r.alpha for rows in model_rows.values() for r in rows]
-        ax.set_xlim(max(all_alphas), min(all_alphas))
+        x_max = failed_bits_x_max if failed_bits_x_max is not None else min(all_alphas)
+        ax.set_xlim(max(all_alphas), x_max)
 
     fig.suptitle(title)
     handles, labels = axes[0].get_legend_handles_labels()
@@ -366,6 +382,7 @@ def plot_failed_bits_histogram(
     model_style: Dict[str, Dict[str, str]],
     dpi: int,
     hist_metrics: List[str],
+    failed_bits_x_max: float | None = None,
 ) -> None:
     model_names = list(model_rows.keys())
     if not model_names:
@@ -378,7 +395,9 @@ def plot_failed_bits_histogram(
             for r in rows:
                 value = metric_values([r], metric)[0]
                 if np.isfinite(value) and value > 0:
-                    alpha_set.add(r.alpha)
+                    # Filter by x_max if specified
+                    if failed_bits_x_max is None or r.alpha >= failed_bits_x_max:
+                        alpha_set.add(r.alpha)
         metric_to_alphas[metric] = sorted(alpha_set, reverse=True)
 
     if not any(metric_to_alphas.values()):
@@ -394,14 +413,10 @@ def plot_failed_bits_histogram(
     if n_metrics == 1:
         axes = [axes]
 
-    def muted_color(color_value: str | None) -> tuple[float, float, float]:
+    def bright_color(color_value: str | None) -> tuple[float, float, float]:
         if color_value is None:
-            base = np.array([0.52, 0.56, 0.62], dtype=float)
-        else:
-            base = np.array(to_rgb(color_value), dtype=float)
-        neutral = np.array([0.86, 0.88, 0.92], dtype=float)
-        mixed = 0.45 * neutral + 0.55 * base
-        return tuple(np.clip(mixed, 0.0, 1.0))
+            return to_rgb("#2E8BFF")
+        return to_rgb(color_value)
 
     for ax, metric in zip(axes, hist_metrics):
         alphas = metric_to_alphas[metric]
@@ -438,46 +453,38 @@ def plot_failed_bits_histogram(
                 y,
                 width,
                 label=style.get("label", model_name),
-                color=muted_color(style.get("color", None)),
-                edgecolor="#7f8b98",
-                linewidth=0.85,
-                alpha=0.82,
+                color=bright_color(style.get("color", None)),
+                edgecolor="#1f1f1f",
+                linewidth=0.95,
+                alpha=0.96,
             )
             model_containers[model_name] = container
 
-        # Emphasize the best model at each alpha (smallest value for the chosen metric).
-        for a_idx in range(len(alphas)):
+        # For each alpha, find the best model and highlight discretely
+        for alpha_idx in range(len(alphas)):
+            best_value = float('inf')
             best_model = None
-            best_value = None
-
+            
+            # Find best value at this alpha
             for model_name in model_names:
-                v = model_y_values[model_name][a_idx]
-                if not np.isfinite(v):
-                    continue
-                if best_value is None or v < best_value:
-                    best_value = v
-                    best_model = model_name
-
-            if best_model is None:
-                continue
-
-            best_patch = model_containers[best_model].patches[a_idx]
-            best_patch.set_facecolor("#4169E1")
-            best_patch.set_linewidth(1.35)
-            best_patch.set_edgecolor("#27408B")
-            best_patch.set_alpha(1.0)
-
-            h = best_patch.get_height()
-            if np.isfinite(h):
-                ax.plot(
-                    best_patch.get_x() + best_patch.get_width() * 0.5,
-                    h,
-                    marker="D",
-                    markersize=3.8,
-                    color="#27408B",
-                    markerfacecolor="#4169E1",
-                    linestyle="None",
-                )
+                y = model_y_values[model_name]
+                if alpha_idx < len(y) and np.isfinite(y[alpha_idx]):
+                    if y[alpha_idx] < best_value:
+                        best_value = y[alpha_idx]
+                        best_model = model_name
+            
+            # Highlight best bar by keeping it fully opaque, dim others
+            for model_name in model_names:
+                container = model_containers[model_name]
+                bar = container[alpha_idx]
+                
+                if model_name == best_model:
+                    # Best bar: keep full opacity and slightly thicker border
+                    bar.set_alpha(0.96)
+                    bar.set_linewidth(1.3)
+                else:
+                    # Non-best bars: reduce opacity to make them less visible
+                    bar.set_alpha(0.50)
 
         ax.set_title(FAILED_BITS_METRIC_LABELS.get(metric, metric))
         ax.set_ylabel(FAILED_BITS_METRIC_LABELS.get(metric, metric))
@@ -492,8 +499,6 @@ def plot_failed_bits_histogram(
         fig.suptitle(title)
 
     handles, labels = axes[0].get_legend_handles_labels()
-    handles.append(mpatches.Patch(facecolor="#4169E1", edgecolor="#27408B", label="Best @ alpha"))
-    labels.append("Best @ alpha")
     axes[0].legend(handles, labels, loc="upper right")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -529,7 +534,10 @@ def main() -> None:
     interp_points = int(cfg.get("interp_points", 280))
     smooth_window = int(cfg.get("smooth_window", 9))
     show_raw_markers = bool(cfg.get("show_raw_markers", True))
-    failed_bits_hist_metrics = normalize_failed_bits_hist_metrics(cfg.get("failed_bits_hist_metrics", ["avg"]))
+    failed_bits_hist_metrics = normalize_failed_bits_hist_metrics(
+        cfg.get("failed_bits_hist_metrics", ["min", "avg", "max"])
+    )
+    failed_bits_x_max = cfg.get("failed_bits_x_max", None)
 
     models_cfg = cfg.get("models", [])
     if not models_cfg:
@@ -542,6 +550,7 @@ def main() -> None:
         name = m["name"]
         path = Path(m["path"])
         rows = parse_res_file(path)
+
         model_rows[name] = rows
         model_style[name] = {
             "label": m.get("label", name),
@@ -604,12 +613,22 @@ def main() -> None:
         show_raw_markers=False,
     )
 
+    plot_failed_bits_histogram(
+        output_path=output_dir / cfg.get("expected_failed_bits_filename", "expected_failed_bits_all_models.png"),
+        title=titles.get("expected_failed_bits", "Failed Bits per Tested Frame (FER x FailedAvg)"),
+        model_rows=model_rows,
+        model_style=model_style,
+        dpi=dpi,
+        hist_metrics=["expected_failed_bits"],
+    )
+
     plot_failed_bits_summary(
         output_path=output_dir / cfg.get("failed_bits_filename", "failed_bits_paper.png"),
         title=titles.get("failed_bits", "Remaining Uncorrected Bits (Min/Avg/Max)"),
         model_rows=model_rows,
         model_style=model_style,
         dpi=dpi,
+        failed_bits_x_max=failed_bits_x_max,
     )
 
     plot_failed_bits_histogram(
@@ -619,9 +638,10 @@ def main() -> None:
         model_style=model_style,
         dpi=dpi,
         hist_metrics=failed_bits_hist_metrics,
+        failed_bits_x_max=failed_bits_x_max,
     )
 
-    print(f"Saved FER/BER/Iter/FailedBits plots to: {output_dir.resolve()}")
+    print(f"Saved FER/BER/Iter/ExpectedFailedBits/FailedBits plots to: {output_dir.resolve()}")
 
 
 if __name__ == "__main__":
