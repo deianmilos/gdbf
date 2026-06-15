@@ -8,16 +8,20 @@
   "interp_points": 200,
   "smooth_window": 7,
   "show_raw_markers": true,
-  "failed_bits_hist_metrics": ["avg"],
+  "failed_bits_hist_metrics": ["min", "avg", "max"],
+  "failed_bits_x_max": 0.009,
   "titles": {
     "fer": "IRISC_P_dv3_R050_L54_N1296: FER Comparison",
     "ber": "IRISC_P_dv3_R050_L54_N1296: BER Comparison",
     "iter": "IRISC_P_dv3_R050_L54_N1296: Average Iteration Comparison",
-    "failed_bits": "IRISC_P_dv3_R050_L54_N1296: Remaining Uncorrected Bits (Min/Avg/Max)"
+    "expected_failed_bits": "IRISC_P_dv3_R050_L54_N1296: Failed Bits per Tested Frame",
+    "failed_bits": "IRISC_P_dv3_R050_L54_N1296: Remaining Uncorrected Bits (Min/Avg/Max)",
+    "failed_bits_hist": "IRISC_P_dv3_R050_L54_N1296: Failed-Bits Distribution Summary"
   },
   "fer_filename": "fer_all_models.png",
   "ber_filename": "ber_all_models.png",
   "iter_filename": "iter_all_models.png",
+  "expected_failed_bits_filename": "expected_failed_bits_all_models.png",
   "failed_bits_filename": "failed_bits_all_models.png",
   "models": [
     {
