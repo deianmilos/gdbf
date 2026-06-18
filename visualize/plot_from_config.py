@@ -8,6 +8,11 @@ from typing import Dict, List
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import to_rgb
+from matplotlib.ticker import AutoMinorLocator, LogLocator, NullFormatter
+
+
+MONO_LINESTYLES = ["-", "--", "-.", ":"]
+MONO_MARKERS = ["o", "s", "^", "D", "v", "x", "P", "*"]
 
 
 LINE_RE = re.compile(
@@ -88,7 +93,7 @@ def apply_paper_style(font_size: int = 11) -> None:
             "font.serif": ["Times New Roman", "DejaVu Serif", "CMU Serif"],
             "font.size": font_size,
             "axes.labelsize": font_size,
-            "axes.titlesize": font_size + 1,
+            "axes.titlesize": font_size,
             "legend.fontsize": font_size - 1,
             "xtick.labelsize": font_size - 1,
             "ytick.labelsize": font_size - 1,
@@ -97,8 +102,8 @@ def apply_paper_style(font_size: int = 11) -> None:
             "axes.facecolor": "white",
             "figure.facecolor": "white",
             "grid.color": "#666666",
-            "grid.alpha": 0.45,
-            "grid.linewidth": 0.7,
+            "grid.alpha": 0.35,
+            "grid.linewidth": 0.6,
             "xtick.direction": "in",
             "ytick.direction": "in",
             "xtick.top": True,
@@ -107,8 +112,25 @@ def apply_paper_style(font_size: int = 11) -> None:
             "legend.framealpha": 1.0,
             "legend.edgecolor": "black",
             "savefig.bbox": "tight",
+            "savefig.pad_inches": 0.03,
         }
     )
+
+
+def get_figure_size(cfg: dict, key_prefix: str, default: tuple[float, float]) -> tuple[float, float]:
+    w = float(cfg.get(f"{key_prefix}_fig_width", default[0]))
+    h = float(cfg.get(f"{key_prefix}_fig_height", default[1]))
+    return (w, h)
+
+
+def apply_monochrome_model_style(model_style: Dict[str, Dict[str, str]]) -> None:
+    for i, name in enumerate(model_style.keys()):
+        st = model_style[name]
+        st["color"] = "#000000"
+        st["linestyle"] = MONO_LINESTYLES[i % len(MONO_LINESTYLES)]
+        st["marker"] = MONO_MARKERS[i % len(MONO_MARKERS)]
+        st["markerfacecolor"] = "white"
+        st["markeredgewidth"] = str(max(1.0, float(st.get("markeredgewidth", 1.0))))
 
 
 FAILED_BITS_METRIC_MAP = {
@@ -223,6 +245,7 @@ def poly_log_fit(x: np.ndarray, y: np.ndarray, degree: int, n_points: int) -> tu
 def plot_metric(
     output_path: Path,
     title: str,
+    xlabel: str,
     ylabel: str,
     metric: str,
     model_rows: Dict[str, List[ResultRow]],
@@ -234,8 +257,48 @@ def plot_metric(
     interp_points: int,
     smooth_window: int,
     show_raw_markers: bool,
+    figure_size: tuple[float, float],
+    show_title: bool,
+    legend_loc: str,
+    save_pdf: bool,
+    legend_right: bool,
+    legend_right_anchor: tuple[float, float],
+    x_margin_frac: float,
+    y_log_margin_decades: float,
+    show_minor_grid: bool,
+    minor_x_divisions: int,
+    x_tick_step: float,
+    x_tick_start: float | None,
+    x_tick_end: float | None,
+    x_tick_decimals: int,
+    axis_label_font_size: float | None,
+    axis_tick_font_size: float | None,
+    legend_font_size: float | None,
+    y_log_min: float | None,
+    y_log_max: float | None,
+    grid_axis: str,
+    axis_facecolor: str | None,
+    figure_facecolor: str | None,
+    grid_major_linestyle: str,
+    grid_major_linewidth: float,
+    grid_major_alpha: float,
+    grid_minor_linestyle: str,
+    grid_minor_linewidth: float,
+    grid_minor_alpha: float,
+    axis_spine_linewidth: float,
+    legend_facecolor: str | None,
+    legend_edgecolor: str | None,
+    legend_framealpha: float | None,
 ) -> None:
-    fig, ax = plt.subplots(figsize=(7.6, 4.8))
+    fig, ax = plt.subplots(figsize=figure_size)
+    if figure_facecolor:
+        fig.patch.set_facecolor(figure_facecolor)
+    if axis_facecolor:
+        ax.set_facecolor(axis_facecolor)
+
+    for spine in ax.spines.values():
+        spine.set_linewidth(axis_spine_linewidth)
+    all_metric_y: List[float] = []
 
     for model_name, rows in model_rows.items():
         x = np.array([r.alpha for r in rows], dtype=float)
@@ -263,6 +326,10 @@ def plot_metric(
                 x_plot, y_plot = poly_log_fit(x, y, degree=poly_degree, n_points=interp_points)
             else:
                 x_plot, y_plot = smooth_log_interp(x, y, n_points=interp_points, window=smooth_window)
+
+        valid_plot_y = y_plot[np.isfinite(y_plot)]
+        if len(valid_plot_y) > 0:
+            all_metric_y.extend(valid_plot_y.tolist())
 
         ax.plot(
             x_plot,
@@ -297,22 +364,344 @@ def plot_metric(
     if metric in {"fer", "ber", "expected_failed_bits"}:
         ax.set_yscale("log")
 
-    ax.set_xlabel("Alpha")
+    ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
-    ax.set_title(title)
+    if axis_label_font_size is not None:
+        ax.xaxis.label.set_size(axis_label_font_size)
+        ax.yaxis.label.set_size(axis_label_font_size)
+    if axis_tick_font_size is not None:
+        ax.tick_params(axis="both", which="major", labelsize=axis_tick_font_size)
+        ax.tick_params(axis="both", which="minor", labelsize=axis_tick_font_size)
+    if show_title:
+        ax.set_title(title)
 
-    ax.grid(True, which="major", linestyle="--")
-    ax.grid(True, which="minor", linestyle=":", linewidth=0.6)
+    ax.grid(
+        True,
+        which="major",
+        linestyle=grid_major_linestyle,
+        linewidth=grid_major_linewidth,
+        alpha=grid_major_alpha,
+        axis=grid_axis,
+    )
+    if show_minor_grid:
+        ax.grid(
+            True,
+            which="minor",
+            linestyle=grid_minor_linestyle,
+            linewidth=grid_minor_linewidth,
+            alpha=grid_minor_alpha,
+            axis=grid_axis,
+        )
     ax.minorticks_on()
+
+    # Denser helper lines for readability in paper plots.
+    if metric in {"fer", "ber", "expected_failed_bits"}:
+        ax.yaxis.set_minor_locator(LogLocator(base=10.0, subs=np.arange(2, 10) * 0.1))
+        ax.yaxis.set_minor_formatter(NullFormatter())
+    if minor_x_divisions >= 2:
+        ax.xaxis.set_minor_locator(AutoMinorLocator(minor_x_divisions))
 
     # Higher alpha on the left, lower alpha on the right.
     all_alphas = [r.alpha for rows in model_rows.values() for r in rows]
-    ax.set_xlim(max(all_alphas), min(all_alphas))
+    alpha_hi = max(all_alphas)
+    alpha_lo = min(all_alphas)
+    alpha_span = max(1e-12, alpha_hi - alpha_lo)
+    margin = max(0.0, x_margin_frac) * alpha_span
+    ax.set_xlim(alpha_hi + margin, alpha_lo - margin)
 
-    ax.legend(loc="best")
+    if x_tick_step > 0:
+        tick_start = alpha_lo if x_tick_start is None else float(x_tick_start)
+        tick_end = alpha_hi if x_tick_end is None else float(x_tick_end)
+        if tick_end < tick_start:
+            tick_start, tick_end = tick_end, tick_start
+        xticks = np.arange(tick_start, tick_end + 0.5 * x_tick_step, x_tick_step)
+        if len(xticks) > 0:
+            ax.set_xticks(xticks)
+            ax.set_xticklabels([f"{v:.{max(0, x_tick_decimals)}f}" for v in xticks])
+
+    if metric in {"fer", "ber", "expected_failed_bits"} and all_metric_y:
+        y_min = min(v for v in all_metric_y if v > 0)
+        y_max = max(all_metric_y)
+        if y_min > 0 and y_max > 0:
+            log_min = np.log10(y_min) - max(0.0, y_log_margin_decades)
+            log_max = np.log10(y_max) + max(0.0, y_log_margin_decades)
+            ax.set_ylim(10.0 ** log_min, 10.0 ** log_max)
+
+    if metric in {"fer", "ber", "expected_failed_bits"}:
+        current_ymin, current_ymax = ax.get_ylim()
+        target_ymin = current_ymin if y_log_min is None else float(y_log_min)
+        target_ymax = current_ymax if y_log_max is None else float(y_log_max)
+        if target_ymin > 0 and target_ymax > target_ymin:
+            ax.set_ylim(target_ymin, target_ymax)
+
+    if legend_right:
+        ax.legend(
+            loc="center left",
+            bbox_to_anchor=legend_right_anchor,
+            fontsize=legend_font_size,
+            facecolor=legend_facecolor,
+            edgecolor=legend_edgecolor,
+            framealpha=legend_framealpha,
+        )
+    else:
+        ax.legend(
+            loc=legend_loc,
+            fontsize=legend_font_size,
+            facecolor=legend_facecolor,
+            edgecolor=legend_edgecolor,
+            framealpha=legend_framealpha,
+        )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=dpi)
+    if save_pdf:
+        fig.savefig(output_path.with_suffix(".pdf"))
+    plt.close(fig)
+
+
+def plot_fer_ber_combined(
+    output_path: Path,
+    title: str,
+    xlabel: str,
+    ylabel: str,
+    model_rows: Dict[str, List[ResultRow]],
+    model_style: Dict[str, Dict[str, str]],
+    dpi: int,
+    smooth_curves: bool,
+    fit_mode: str,
+    poly_degree: int,
+    interp_points: int,
+    smooth_window: int,
+    show_raw_markers: bool,
+    figure_size: tuple[float, float],
+    show_title: bool,
+    legend_loc: str,
+    save_pdf: bool,
+    legend_right: bool,
+    legend_right_anchor: tuple[float, float],
+    x_margin_frac: float,
+    y_log_margin_decades: float,
+    show_minor_grid: bool,
+    minor_x_divisions: int,
+    x_tick_step: float,
+    x_tick_start: float | None,
+    x_tick_end: float | None,
+    x_tick_decimals: int,
+    axis_label_font_size: float | None,
+    axis_tick_font_size: float | None,
+    legend_font_size: float | None,
+    y_log_min: float | None,
+    y_log_max: float | None,
+    grid_axis: str,
+    axis_facecolor: str | None,
+    figure_facecolor: str | None,
+    grid_major_linestyle: str,
+    grid_major_linewidth: float,
+    grid_major_alpha: float,
+    grid_minor_linestyle: str,
+    grid_minor_linewidth: float,
+    grid_minor_alpha: float,
+    axis_spine_linewidth: float,
+    legend_facecolor: str | None,
+    legend_edgecolor: str | None,
+    legend_framealpha: float | None,
+    ber_linestyle: str,
+    legend_title: str | None,
+) -> None:
+    fig, ax = plt.subplots(figsize=figure_size)
+    if figure_facecolor:
+        fig.patch.set_facecolor(figure_facecolor)
+    if axis_facecolor:
+        ax.set_facecolor(axis_facecolor)
+
+    for spine in ax.spines.values():
+        spine.set_linewidth(axis_spine_linewidth)
+
+    all_metric_y: List[float] = []
+
+    for model_name, rows in model_rows.items():
+        style = model_style[model_name]
+        x = np.array([r.alpha for r in rows], dtype=float)
+        y_fer = np.array([r.fer for r in rows], dtype=float)
+        y_ber = np.array([r.ber for r in rows], dtype=float)
+
+        valid_fer = np.isfinite(x) & np.isfinite(y_fer) & (y_fer > 0)
+        valid_ber = np.isfinite(x) & np.isfinite(y_ber) & (y_ber > 0)
+
+        x_fer = x[valid_fer]
+        fer = np.clip(y_fer[valid_fer], 1e-15, None)
+        x_ber = x[valid_ber]
+        ber = np.clip(y_ber[valid_ber], 1e-15, None)
+
+        if len(x_fer) == 0 and len(x_ber) == 0:
+            continue
+
+        x_fer_plot = x_fer
+        fer_plot = fer
+        if smooth_curves and len(x_fer) >= 2:
+            if fit_mode == "poly":
+                x_fer_plot, fer_plot = poly_log_fit(x_fer, fer, degree=poly_degree, n_points=interp_points)
+            else:
+                x_fer_plot, fer_plot = smooth_log_interp(x_fer, fer, n_points=interp_points, window=smooth_window)
+
+        x_ber_plot = x_ber
+        ber_plot = ber
+        if smooth_curves and len(x_ber) >= 2:
+            if fit_mode == "poly":
+                x_ber_plot, ber_plot = poly_log_fit(x_ber, ber, degree=poly_degree, n_points=interp_points)
+            else:
+                x_ber_plot, ber_plot = smooth_log_interp(x_ber, ber, n_points=interp_points, window=smooth_window)
+
+        fer_valid_plot = fer_plot[np.isfinite(fer_plot)]
+        ber_valid_plot = ber_plot[np.isfinite(ber_plot)]
+        if len(fer_valid_plot) > 0:
+            all_metric_y.extend(fer_valid_plot.tolist())
+        if len(ber_valid_plot) > 0:
+            all_metric_y.extend(ber_valid_plot.tolist())
+
+        if len(x_fer_plot) > 0:
+            ax.plot(
+                x_fer_plot,
+                fer_plot,
+                label=f"{style.get('label', model_name)} FER",
+                color=style.get("color", None),
+                linestyle=style.get("linestyle", "-"),
+                marker=(None if (smooth_curves and len(x_fer) >= 2) else style.get("marker", "o")),
+                linewidth=float(style.get("linewidth", 1.8)),
+                markersize=float(style.get("markersize", 5.5)),
+                markerfacecolor=style.get("markerfacecolor", "white"),
+                markeredgewidth=float(style.get("markeredgewidth", 1.0)),
+            )
+
+        if len(x_ber_plot) > 0:
+            ax.plot(
+                x_ber_plot,
+                ber_plot,
+                label=f"{style.get('label', model_name)} BER",
+                color=style.get("color", None),
+                linestyle=ber_linestyle,
+                marker=(None if (smooth_curves and len(x_ber) >= 2) else style.get("marker", "o")),
+                linewidth=float(style.get("linewidth", 1.8)),
+                markersize=float(style.get("markersize", 5.5)),
+                markerfacecolor=style.get("markerfacecolor", "white"),
+                markeredgewidth=float(style.get("markeredgewidth", 1.0)),
+                alpha=0.9,
+            )
+
+        if show_raw_markers and smooth_curves:
+            if len(x_fer) > 0:
+                ax.scatter(
+                    x_fer,
+                    fer,
+                    s=16,
+                    marker=style.get("marker", "o"),
+                    facecolors=style.get("markerfacecolor", "white"),
+                    edgecolors=style.get("color", None),
+                    linewidths=float(style.get("markeredgewidth", 1.0)),
+                    alpha=0.85,
+                )
+            if len(x_ber) > 0:
+                ax.scatter(
+                    x_ber,
+                    ber,
+                    s=12,
+                    marker=style.get("marker", "o"),
+                    facecolors="none",
+                    edgecolors=style.get("color", None),
+                    linewidths=float(style.get("markeredgewidth", 1.0)),
+                    alpha=0.75,
+                )
+
+    ax.set_yscale("log")
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    if axis_label_font_size is not None:
+        ax.xaxis.label.set_size(axis_label_font_size)
+        ax.yaxis.label.set_size(axis_label_font_size)
+    if axis_tick_font_size is not None:
+        ax.tick_params(axis="both", which="major", labelsize=axis_tick_font_size)
+        ax.tick_params(axis="both", which="minor", labelsize=axis_tick_font_size)
+    if show_title:
+        ax.set_title(title)
+
+    ax.grid(
+        True,
+        which="major",
+        linestyle=grid_major_linestyle,
+        linewidth=grid_major_linewidth,
+        alpha=grid_major_alpha,
+        axis=grid_axis,
+    )
+    if show_minor_grid:
+        ax.grid(
+            True,
+            which="minor",
+            linestyle=grid_minor_linestyle,
+            linewidth=grid_minor_linewidth,
+            alpha=grid_minor_alpha,
+            axis=grid_axis,
+        )
+    ax.minorticks_on()
+    ax.yaxis.set_minor_locator(LogLocator(base=10.0, subs=np.arange(2, 10) * 0.1))
+    ax.yaxis.set_minor_formatter(NullFormatter())
+    if minor_x_divisions >= 2:
+        ax.xaxis.set_minor_locator(AutoMinorLocator(minor_x_divisions))
+
+    all_alphas = [r.alpha for rows in model_rows.values() for r in rows]
+    alpha_hi = max(all_alphas)
+    alpha_lo = min(all_alphas)
+    alpha_span = max(1e-12, alpha_hi - alpha_lo)
+    margin = max(0.0, x_margin_frac) * alpha_span
+    ax.set_xlim(alpha_hi + margin, alpha_lo - margin)
+
+    if x_tick_step > 0:
+        tick_start = alpha_lo if x_tick_start is None else float(x_tick_start)
+        tick_end = alpha_hi if x_tick_end is None else float(x_tick_end)
+        if tick_end < tick_start:
+            tick_start, tick_end = tick_end, tick_start
+        xticks = np.arange(tick_start, tick_end + 0.5 * x_tick_step, x_tick_step)
+        if len(xticks) > 0:
+            ax.set_xticks(xticks)
+            ax.set_xticklabels([f"{v:.{max(0, x_tick_decimals)}f}" for v in xticks])
+
+    if all_metric_y:
+        y_min = min(v for v in all_metric_y if v > 0)
+        y_max = max(all_metric_y)
+        if y_min > 0 and y_max > 0:
+            log_min = np.log10(y_min) - max(0.0, y_log_margin_decades)
+            log_max = np.log10(y_max) + max(0.0, y_log_margin_decades)
+            ax.set_ylim(10.0 ** log_min, 10.0 ** log_max)
+
+    current_ymin, current_ymax = ax.get_ylim()
+    target_ymin = current_ymin if y_log_min is None else float(y_log_min)
+    target_ymax = current_ymax if y_log_max is None else float(y_log_max)
+    if target_ymin > 0 and target_ymax > target_ymin:
+        ax.set_ylim(target_ymin, target_ymax)
+
+    if legend_right:
+        ax.legend(
+            loc="center left",
+            bbox_to_anchor=legend_right_anchor,
+            fontsize=legend_font_size,
+            facecolor=legend_facecolor,
+            edgecolor=legend_edgecolor,
+            framealpha=legend_framealpha,
+            title=legend_title,
+        )
+    else:
+        ax.legend(
+            loc=legend_loc,
+            fontsize=legend_font_size,
+            facecolor=legend_facecolor,
+            edgecolor=legend_edgecolor,
+            framealpha=legend_framealpha,
+            title=legend_title,
+        )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=dpi)
+    if save_pdf:
+        fig.savefig(output_path.with_suffix(".pdf"))
     plt.close(fig)
 
 
@@ -323,8 +712,11 @@ def plot_failed_bits_summary(
     model_style: Dict[str, Dict[str, str]],
     dpi: int,
     failed_bits_x_max: float | None = None,
+    figure_size: tuple[float, float] = (10.5, 3.8),
+    show_title: bool = True,
+    save_pdf: bool = True,
 ) -> None:
-    fig, axes = plt.subplots(1, 3, figsize=(13.0, 4.2), sharex=True)
+    fig, axes = plt.subplots(1, 3, figsize=figure_size, sharex=True)
     metrics = [
         ("failed_min", "Min Uncorrected Bits"),
         ("failed_avg", "Avg Uncorrected Bits"),
@@ -365,13 +757,16 @@ def plot_failed_bits_summary(
         x_max = failed_bits_x_max if failed_bits_x_max is not None else min(all_alphas)
         ax.set_xlim(max(all_alphas), x_max)
 
-    fig.suptitle(title)
+    if show_title:
+        fig.suptitle(title)
     handles, labels = axes[0].get_legend_handles_labels()
     if handles:
         fig.legend(handles, labels, loc="upper center", ncol=min(5, len(labels)), frameon=True, bbox_to_anchor=(0.5, 1.04))
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=dpi)
+    if save_pdf:
+        fig.savefig(output_path.with_suffix(".pdf"))
     plt.close(fig)
 
 
@@ -383,6 +778,8 @@ def plot_failed_bits_histogram(
     dpi: int,
     hist_metrics: List[str],
     failed_bits_x_max: float | None = None,
+    show_title: bool = True,
+    save_pdf: bool = True,
 ) -> None:
     model_names = list(model_rows.keys())
     if not model_names:
@@ -493,10 +890,11 @@ def plot_failed_bits_histogram(
         ax.set_xticklabels([f"{a:.3f}" for a in alphas], rotation=45, ha="right")
         ax.grid(True, axis="y", which="major", linestyle="--", linewidth=0.7)
 
-    if n_metrics == 1:
-        axes[0].set_title(title)
-    else:
-        fig.suptitle(title)
+    if show_title:
+        if n_metrics == 1:
+            axes[0].set_title(title)
+        else:
+            fig.suptitle(title)
 
     handles, labels = axes[0].get_legend_handles_labels()
     axes[0].legend(handles, labels, loc="upper right")
@@ -504,6 +902,8 @@ def plot_failed_bits_histogram(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout()
     fig.savefig(output_path, dpi=dpi)
+    if save_pdf:
+        fig.savefig(output_path.with_suffix(".pdf"))
     plt.close(fig)
 
 
@@ -526,6 +926,40 @@ def main() -> None:
 
     output_dir = Path(cfg.get("output_dir", "visualize/plots/paper"))
     dpi = int(cfg.get("dpi", 400))
+    save_pdf = bool(cfg.get("save_pdf", True))
+    show_title = bool(cfg.get("show_title", False))
+    legend_loc = str(cfg.get("legend_loc", "best"))
+    legend_right = bool(cfg.get("legend_right", False))
+    legend_right_anchor = tuple(cfg.get("legend_right_anchor", [1.02, 0.5]))
+    paper_monochrome = bool(cfg.get("paper_monochrome", True))
+    x_margin_frac = float(cfg.get("x_margin_frac", 0.06))
+    y_log_margin_decades = float(cfg.get("y_log_margin_decades", 0.12))
+    show_minor_grid = bool(cfg.get("show_minor_grid", True))
+    minor_x_divisions = int(cfg.get("minor_x_divisions", 4))
+    x_tick_step = float(cfg.get("x_tick_step", 0.0))
+    x_tick_start = cfg.get("x_tick_start", None)
+    x_tick_end = cfg.get("x_tick_end", None)
+    x_tick_decimals = int(cfg.get("x_tick_decimals", 2))
+    axis_label_font_size = cfg.get("axis_label_font_size", None)
+    axis_tick_font_size = cfg.get("axis_tick_font_size", None)
+    legend_font_size = cfg.get("legend_font_size", None)
+    y_log_min = cfg.get("y_log_min", None)
+    y_log_max = cfg.get("y_log_max", None)
+    grid_axis = str(cfg.get("grid_axis", "both")).strip().lower()
+    if grid_axis not in {"both", "x", "y"}:
+        grid_axis = "both"
+    axis_facecolor = cfg.get("axis_facecolor", None)
+    figure_facecolor = cfg.get("figure_facecolor", None)
+    grid_major_linestyle = str(cfg.get("grid_major_linestyle", "--"))
+    grid_major_linewidth = float(cfg.get("grid_major_linewidth", 0.6))
+    grid_major_alpha = float(cfg.get("grid_major_alpha", 0.35))
+    grid_minor_linestyle = str(cfg.get("grid_minor_linestyle", ":"))
+    grid_minor_linewidth = float(cfg.get("grid_minor_linewidth", 0.45))
+    grid_minor_alpha = float(cfg.get("grid_minor_alpha", 0.45))
+    axis_spine_linewidth = float(cfg.get("axis_spine_linewidth", 1.0))
+    legend_facecolor = cfg.get("legend_facecolor", None)
+    legend_edgecolor = cfg.get("legend_edgecolor", None)
+    legend_framealpha = cfg.get("legend_framealpha", None)
     smooth_curves = bool(cfg.get("smooth_curves", True))
     fit_mode = str(cfg.get("fit_mode", "interp")).strip().lower()
     if fit_mode not in {"interp", "poly"}:
@@ -534,6 +968,9 @@ def main() -> None:
     interp_points = int(cfg.get("interp_points", 280))
     smooth_window = int(cfg.get("smooth_window", 9))
     show_raw_markers = bool(cfg.get("show_raw_markers", True))
+    plot_combined_fer_ber = bool(cfg.get("plot_combined_fer_ber", False))
+    ber_linestyle = str(cfg.get("ber_linestyle", ":"))
+    fer_ber_legend_title = cfg.get("fer_ber_legend_title", "Solid = FER, Dotted = BER")
     failed_bits_hist_metrics = normalize_failed_bits_hist_metrics(
         cfg.get("failed_bits_hist_metrics", ["min", "avg", "max"])
     )
@@ -563,12 +1000,17 @@ def main() -> None:
             "markeredgewidth": str(m.get("markeredgewidth", 1.0)),
         }
 
+    if paper_monochrome:
+        apply_monochrome_model_style(model_style)
+
     titles = cfg.get("titles", {})
+    axis_labels = cfg.get("axis_labels", {})
 
     plot_metric(
         output_path=output_dir / cfg.get("fer_filename", "fer_paper.png"),
         title=titles.get("fer", "FER Comparison"),
-        ylabel="FER",
+        xlabel=axis_labels.get("fer_x", "Alpha"),
+        ylabel=axis_labels.get("fer_y", "FER"),
         metric="fer",
         model_rows=model_rows,
         model_style=model_style,
@@ -579,12 +1021,96 @@ def main() -> None:
         interp_points=interp_points,
         smooth_window=smooth_window,
         show_raw_markers=show_raw_markers,
+        figure_size=get_figure_size(cfg, "fer", (3.5, 2.7)),
+        show_title=show_title,
+        legend_loc=legend_loc,
+        save_pdf=save_pdf,
+        legend_right=legend_right,
+        legend_right_anchor=legend_right_anchor,
+        x_margin_frac=x_margin_frac,
+        y_log_margin_decades=y_log_margin_decades,
+        show_minor_grid=show_minor_grid,
+        minor_x_divisions=minor_x_divisions,
+        x_tick_step=x_tick_step,
+        x_tick_start=x_tick_start,
+        x_tick_end=x_tick_end,
+        x_tick_decimals=x_tick_decimals,
+        axis_label_font_size=axis_label_font_size,
+        axis_tick_font_size=axis_tick_font_size,
+        legend_font_size=legend_font_size,
+        y_log_min=y_log_min,
+        y_log_max=y_log_max,
+        grid_axis=grid_axis,
+        axis_facecolor=axis_facecolor,
+        figure_facecolor=figure_facecolor,
+        grid_major_linestyle=grid_major_linestyle,
+        grid_major_linewidth=grid_major_linewidth,
+        grid_major_alpha=grid_major_alpha,
+        grid_minor_linestyle=grid_minor_linestyle,
+        grid_minor_linewidth=grid_minor_linewidth,
+        grid_minor_alpha=grid_minor_alpha,
+        axis_spine_linewidth=axis_spine_linewidth,
+        legend_facecolor=legend_facecolor,
+        legend_edgecolor=legend_edgecolor,
+        legend_framealpha=legend_framealpha,
     )
+
+    if plot_combined_fer_ber:
+        plot_fer_ber_combined(
+            output_path=output_dir / cfg.get("fer_ber_filename", "fer_ber_combined.png"),
+            title=titles.get("fer_ber", "FER/BER Comparison"),
+            xlabel=axis_labels.get("fer_ber_x", axis_labels.get("fer_x", "Alpha")),
+            ylabel=axis_labels.get("fer_ber_y", "Error Rate"),
+            model_rows=model_rows,
+            model_style=model_style,
+            dpi=dpi,
+            smooth_curves=smooth_curves,
+            fit_mode=fit_mode,
+            poly_degree=poly_degree,
+            interp_points=interp_points,
+            smooth_window=smooth_window,
+            show_raw_markers=show_raw_markers,
+            figure_size=get_figure_size(cfg, "fer_ber", (4.8, 3.6)),
+            show_title=show_title,
+            legend_loc=legend_loc,
+            save_pdf=save_pdf,
+            legend_right=legend_right,
+            legend_right_anchor=legend_right_anchor,
+            x_margin_frac=x_margin_frac,
+            y_log_margin_decades=y_log_margin_decades,
+            show_minor_grid=show_minor_grid,
+            minor_x_divisions=minor_x_divisions,
+            x_tick_step=x_tick_step,
+            x_tick_start=x_tick_start,
+            x_tick_end=x_tick_end,
+            x_tick_decimals=x_tick_decimals,
+            axis_label_font_size=axis_label_font_size,
+            axis_tick_font_size=axis_tick_font_size,
+            legend_font_size=legend_font_size,
+            y_log_min=y_log_min,
+            y_log_max=y_log_max,
+            grid_axis=grid_axis,
+            axis_facecolor=axis_facecolor,
+            figure_facecolor=figure_facecolor,
+            grid_major_linestyle=grid_major_linestyle,
+            grid_major_linewidth=grid_major_linewidth,
+            grid_major_alpha=grid_major_alpha,
+            grid_minor_linestyle=grid_minor_linestyle,
+            grid_minor_linewidth=grid_minor_linewidth,
+            grid_minor_alpha=grid_minor_alpha,
+            axis_spine_linewidth=axis_spine_linewidth,
+            legend_facecolor=legend_facecolor,
+            legend_edgecolor=legend_edgecolor,
+            legend_framealpha=legend_framealpha,
+            ber_linestyle=ber_linestyle,
+            legend_title=fer_ber_legend_title,
+        )
 
     plot_metric(
         output_path=output_dir / cfg.get("ber_filename", "ber_paper.png"),
         title=titles.get("ber", "BER Comparison"),
-        ylabel="BER",
+        xlabel=axis_labels.get("ber_x", "Alpha"),
+        ylabel=axis_labels.get("ber_y", "BER"),
         metric="ber",
         model_rows=model_rows,
         model_style=model_style,
@@ -595,12 +1121,45 @@ def main() -> None:
         interp_points=interp_points,
         smooth_window=smooth_window,
         show_raw_markers=show_raw_markers,
+        figure_size=get_figure_size(cfg, "ber", (3.5, 2.7)),
+        show_title=show_title,
+        legend_loc=legend_loc,
+        save_pdf=save_pdf,
+        legend_right=legend_right,
+        legend_right_anchor=legend_right_anchor,
+        x_margin_frac=x_margin_frac,
+        y_log_margin_decades=y_log_margin_decades,
+        show_minor_grid=show_minor_grid,
+        minor_x_divisions=minor_x_divisions,
+        x_tick_step=x_tick_step,
+        x_tick_start=x_tick_start,
+        x_tick_end=x_tick_end,
+        x_tick_decimals=x_tick_decimals,
+        axis_label_font_size=axis_label_font_size,
+        axis_tick_font_size=axis_tick_font_size,
+        legend_font_size=legend_font_size,
+        y_log_min=y_log_min,
+        y_log_max=y_log_max,
+        grid_axis=grid_axis,
+        axis_facecolor=axis_facecolor,
+        figure_facecolor=figure_facecolor,
+        grid_major_linestyle=grid_major_linestyle,
+        grid_major_linewidth=grid_major_linewidth,
+        grid_major_alpha=grid_major_alpha,
+        grid_minor_linestyle=grid_minor_linestyle,
+        grid_minor_linewidth=grid_minor_linewidth,
+        grid_minor_alpha=grid_minor_alpha,
+        axis_spine_linewidth=axis_spine_linewidth,
+        legend_facecolor=legend_facecolor,
+        legend_edgecolor=legend_edgecolor,
+        legend_framealpha=legend_framealpha,
     )
 
     plot_metric(
         output_path=output_dir / cfg.get("iter_filename", "iter_paper.png"),
         title=titles.get("iter", "Average Iteration Comparison"),
-        ylabel="Average Iterations",
+        xlabel=axis_labels.get("iter_x", "Alpha"),
+        ylabel=axis_labels.get("iter_y", "Average Iterations"),
         metric="iter",
         model_rows=model_rows,
         model_style=model_style,
@@ -611,6 +1170,38 @@ def main() -> None:
         interp_points=interp_points,
         smooth_window=smooth_window,
         show_raw_markers=False,
+        figure_size=get_figure_size(cfg, "iter", (3.5, 2.7)),
+        show_title=show_title,
+        legend_loc=legend_loc,
+        save_pdf=save_pdf,
+        legend_right=legend_right,
+        legend_right_anchor=legend_right_anchor,
+        x_margin_frac=x_margin_frac,
+        y_log_margin_decades=y_log_margin_decades,
+        show_minor_grid=show_minor_grid,
+        minor_x_divisions=minor_x_divisions,
+        x_tick_step=x_tick_step,
+        x_tick_start=x_tick_start,
+        x_tick_end=x_tick_end,
+        x_tick_decimals=x_tick_decimals,
+        axis_label_font_size=axis_label_font_size,
+        axis_tick_font_size=axis_tick_font_size,
+        legend_font_size=legend_font_size,
+        y_log_min=y_log_min,
+        y_log_max=y_log_max,
+        grid_axis=grid_axis,
+        axis_facecolor=axis_facecolor,
+        figure_facecolor=figure_facecolor,
+        grid_major_linestyle=grid_major_linestyle,
+        grid_major_linewidth=grid_major_linewidth,
+        grid_major_alpha=grid_major_alpha,
+        grid_minor_linestyle=grid_minor_linestyle,
+        grid_minor_linewidth=grid_minor_linewidth,
+        grid_minor_alpha=grid_minor_alpha,
+        axis_spine_linewidth=axis_spine_linewidth,
+        legend_facecolor=legend_facecolor,
+        legend_edgecolor=legend_edgecolor,
+        legend_framealpha=legend_framealpha,
     )
 
     plot_failed_bits_histogram(
@@ -620,6 +1211,8 @@ def main() -> None:
         model_style=model_style,
         dpi=dpi,
         hist_metrics=["expected_failed_bits"],
+        show_title=show_title,
+        save_pdf=save_pdf,
     )
 
     plot_failed_bits_summary(
@@ -629,6 +1222,9 @@ def main() -> None:
         model_style=model_style,
         dpi=dpi,
         failed_bits_x_max=failed_bits_x_max,
+        figure_size=get_figure_size(cfg, "failed_bits", (7.2, 2.8)),
+        show_title=show_title,
+        save_pdf=save_pdf,
     )
 
     plot_failed_bits_histogram(
@@ -639,6 +1235,8 @@ def main() -> None:
         dpi=dpi,
         hist_metrics=failed_bits_hist_metrics,
         failed_bits_x_max=failed_bits_x_max,
+        show_title=show_title,
+        save_pdf=save_pdf,
     )
 
     print(f"Saved FER/BER/Iter/ExpectedFailedBits/FailedBits plots to: {output_dir.resolve()}")
