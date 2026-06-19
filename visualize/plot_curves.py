@@ -51,3 +51,49 @@ def poly_log_fit(
 
     xd = np.linspace(xs.min(), xs.max(), int(n_points))
     return xd[::-1], np.power(10.0, np.polyval(coeff, xd))[::-1]
+
+
+def smooth_linear_median_interp(
+    x: np.ndarray, y: np.ndarray, n_points: int, window: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Interpolate y in linear domain on a dense grid, then apply a moving median
+    filter for robust trend smoothing. Returns (x_dense_desc, y_dense_desc).
+    """
+    idx = np.argsort(x)
+    xs = np.asarray(x[idx], dtype=float)
+    ys = np.asarray(y[idx], dtype=float)
+
+    xd = np.linspace(xs.min(), xs.max(), int(n_points))
+    yd = np.interp(xd, xs, ys)
+
+    w = max(1, int(window))
+    if w % 2 == 0:
+        w += 1
+    if w > 1:
+        pad = w // 2
+        padded = np.pad(yd, (pad, pad), mode="edge")
+        out = np.empty_like(yd)
+        for i in range(len(yd)):
+            out[i] = np.median(padded[i : i + w])
+        yd = out
+
+    return xd[::-1], yd[::-1]
+
+
+def poly_linear_fit(
+    x: np.ndarray, y: np.ndarray, degree: int, n_points: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Fit a polynomial in linear domain and evaluate on a dense grid.
+    Returns (x_dense_desc, y_dense_desc).
+    """
+    idx = np.argsort(x)
+    xs = np.asarray(x[idx], dtype=float)
+    ys = np.asarray(y[idx], dtype=float)
+
+    deg = max(1, min(int(degree), len(xs) - 1))
+    coeff = np.polyfit(xs, ys, deg)
+
+    xd = np.linspace(xs.min(), xs.max(), int(n_points))
+    return xd[::-1], np.polyval(coeff, xd)[::-1]
