@@ -156,7 +156,5 @@ void FrameStateFree(FrameState *fs)
   free(fs->features);              fs->features = NULL;
   free(fs->originalShiftMatrix);   fs->originalShiftMatrix = NULL;
 
-  free(fs->errorIndexCorrectedIter); fs->errorIndexCorrectedIter = NULL;
-
   StagnationStateFree(&fs->stagnationState);
 }

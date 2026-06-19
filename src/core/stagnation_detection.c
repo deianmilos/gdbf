@@ -62,7 +62,6 @@ int StagnationStateUpdate(
     state->stagnationCounter++;
   } else {
     state->stagnationCounter = 0;
-    state->oscillationCounter = 0;
   }
   state->previousMaxEnergy = maxEnergy;
 
@@ -73,8 +72,19 @@ int StagnationStateUpdate(
     }
   }
 
+  /*
+   * Treat oscillation as repeated revisits inside the recent max-energy
+   * window.  The counter is a leaky accumulator:
+   *   - A revisit (value already in history) adds one.
+   *   - A miss (new value not seen recently) subtracts one, but never below
+   *     zero.  This lets noisy cycles like 2,3,1,5,2,3,1 accumulate evidence
+   *     across the interrupting values without a full reset, while truly novel
+   *     sequences drain the counter back to zero.
+   */
   if (inHistory) {
     state->oscillationCounter++;
+  } else if (state->oscillationCounter > 0) {
+    state->oscillationCounter--;
   }
 
   if (state->historyCount < state->energyHistoryLen) {

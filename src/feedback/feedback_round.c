@@ -13,6 +13,7 @@
  */
 
 #include "frame_state.h"
+#include "decoder_receiver.h"
 #include "stagnation_detection.h"
 
 #include <stdlib.h>   /* rand() */
@@ -492,6 +493,20 @@ FeedbackResult RunFeedbackRound(FrameState *fs)
     FEEDBACK_LOG(fs->feedbackLogsEnabled,
                  "[sender->receiver][round] round=%d mask_sent, receiver_will_run_next_%d_iterations\n",
                  fs->feedbackRounds, fs->feedbackIntervalIters);
+
+    if (!fs->config->feedbackContinueFromCurrent) {
+      int i;
+      InitDecodedFromReceived(fs->receivedword, fs->decodedBits, fs->codeLength);
+      for (i = 0; i < fs->xLength; i++) {
+        fs->flipCounts[i] = 0;
+      }
+      fs->recentEnergyCount = 0;
+      FEEDBACK_LOG(fs->feedbackLogsEnabled,
+                   "[receiver_calc] feedback_continue_from_current=0 -> restarted from received word\n");
+    } else {
+      FEEDBACK_LOG(fs->feedbackLogsEnabled,
+                   "[receiver_calc] feedback_continue_from_current=1 -> continuing from current decoded state\n");
+    }
 
     StagnationStateReset(&fs->stagnationState);
     return FEEDBACK_CONTINUE_ITER;

@@ -4,9 +4,7 @@
 #include "common.h"
 
 typedef enum {
-  CANDIDATE_SELECTION_TOPK = 0,
-  CANDIDATE_SELECTION_GRAPH = 1,
-  CANDIDATE_SELECTION_MAX_ENERGY_CHECKS = 2
+  CANDIDATE_SELECTION_MAX_ENERGY_CHECKS = 0
 } CandidateSelectionType;
 
 typedef struct {
@@ -28,5 +26,20 @@ typedef struct {
 } CandidateSelectionStrategy;
 
 const CandidateSelectionStrategy *GetCandidateSelectionStrategy(CandidateSelectionType type);
+
+int CollectMaxEnergySeedIndices(
+  const int *bitEnergy,
+  int xLength,
+  int *seedIdxOut,
+  int maxSeedCount);
+
+int BuildMaxEnergyChecksCandidatesForSeed(
+  const BaseMatrixData *base,
+  const int *bitEnergy,
+  const int *unsatCounts,
+  int xLength,
+  const CandidateSelectionConfig *config,
+  int seedIdx,
+  int *candidateIdx);
 
 #endif

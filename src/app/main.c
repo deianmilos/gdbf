@@ -5,401 +5,17 @@
 #include "decoder.h"
 #include "decoder_framework.h"
 #include "stats.h"
+#include "app/logging.h"
+#include "app/args_and_config.h"
 #include <io.h>
 #include <direct.h>
+#include <unistd.h>
 
 FILE *datasetFile = NULL;
 
 #define AUX_EQ_HIST_MAX 256
 
-static void PrintFeedbackShiftDistributionSummary(
-  FILE *fout,
-  float alpha,
-  long long framesTested,
-  long long framesNoFeedbackSuccess,
-  long long framesFeedbackSuccess,
-  long long framesNotManagedDecode,
-  const long long *feedbackSuccessAuxEqHist,
-  long long feedbackSuccessAuxEqOverflow)
-{
-  int eq;
-  int printedAny = 0;
-  double pNoFeedbackSuccess;
-  double pFeedbackSuccess;
-  double pNotManagedDecode;
-
-  if (framesTested <= 0 || feedbackSuccessAuxEqHist == NULL) {
-    return;
-  }
-
-  pNoFeedbackSuccess = (100.0 * (double)framesNoFeedbackSuccess) / (double)framesTested;
-  pFeedbackSuccess = (100.0 * (double)framesFeedbackSuccess) / (double)framesTested;
-  pNotManagedDecode = (100.0 * (double)framesNotManagedDecode) / (double)framesTested;
-
-  printf("[feedback_shift][alpha=%.5f] Frame outcome (%% of tested): no_feedback_success=%.2f%%, feedback_success=%.2f%%, not_managed_decode=%.2f%%\n",
-         alpha,
-         pNoFeedbackSuccess,
-         pFeedbackSuccess,
-         pNotManagedDecode);
-
-  if (framesFeedbackSuccess > 0) {
-    int lineCount = 0;
-    printf("[feedback_shift][alpha=%.5f] Feedback-success breakdown by ShiftMatrixGenerations (%% among feedback_success frames):\n",
-           alpha);
-    for (eq = 0; eq < AUX_EQ_HIST_MAX; eq++) {
-      if (feedbackSuccessAuxEqHist[eq] > 0) {
-        double pEq = (100.0 * (double)feedbackSuccessAuxEqHist[eq]) / (double)framesFeedbackSuccess;
-        printf("  gen=%d: %.2f%% (%lld/%lld)",
-               eq,
-               pEq,
-               feedbackSuccessAuxEqHist[eq],
-               framesFeedbackSuccess);
-        lineCount++;
-        if (lineCount % 5 == 0) {
-          printf("\n");
-        } else {
-          printf(" | ");
-        }
-        printedAny = 1;
-      }
-    }
-    if (printedAny && lineCount % 5 != 0) {
-      printf("\n");
-    }
-    if (feedbackSuccessAuxEqOverflow > 0) {
-      double pOverflow = (100.0 * (double)feedbackSuccessAuxEqOverflow) / (double)framesFeedbackSuccess;
-      printf("  gen>=%d: %.2f%% (%lld/%lld)\n",
-             AUX_EQ_HIST_MAX,
-             pOverflow,
-             feedbackSuccessAuxEqOverflow,
-             framesFeedbackSuccess);
-      printedAny = 1;
-    }
-    if (!printedAny) {
-      printf("  none\n");
-    }
-  } else {
-    printf("[feedback_shift][alpha=%.5f] Feedback-success breakdown by ShiftMatrixGenerations: none (no successful feedback-assisted frames)\n",
-           alpha);
-  }
-
-  if (fout != NULL) {
-    printedAny = 0;
-    fprintf(fout,
-            "[feedback_shift][alpha=%.5f] Frame outcome (%% of tested): no_feedback_success=%.2f%%, feedback_success=%.2f%%, not_managed_decode=%.2f%%\n",
-            alpha,
-            pNoFeedbackSuccess,
-            pFeedbackSuccess,
-            pNotManagedDecode);
-
-    if (framesFeedbackSuccess > 0) {
-      int lineCountFile = 0;
-      fprintf(fout,
-              "[feedback_shift][alpha=%.5f] Feedback-success breakdown by ShiftMatrixGenerations (%% among feedback_success frames):\n",
-              alpha);
-      for (eq = 0; eq < AUX_EQ_HIST_MAX; eq++) {
-        if (feedbackSuccessAuxEqHist[eq] > 0) {
-          double pEq = (100.0 * (double)feedbackSuccessAuxEqHist[eq]) / (double)framesFeedbackSuccess;
-          fprintf(fout,
-                  "  gen=%d: %.2f%% (%lld/%lld)",
-                  eq,
-                  pEq,
-                  feedbackSuccessAuxEqHist[eq],
-                  framesFeedbackSuccess);
-          lineCountFile++;
-          if (lineCountFile % 5 == 0) {
-            fprintf(fout, "\n");
-          } else {
-            fprintf(fout, " | ");
-          }
-          printedAny = 1;
-        }
-      }
-      if (printedAny && lineCountFile % 5 != 0) {
-        fprintf(fout, "\n");
-      }
-      if (feedbackSuccessAuxEqOverflow > 0) {
-        double pOverflow = (100.0 * (double)feedbackSuccessAuxEqOverflow) / (double)framesFeedbackSuccess;
-        fprintf(fout,
-                "  gen>=%d: %.2f%% (%lld/%lld)\n",
-                AUX_EQ_HIST_MAX,
-                pOverflow,
-                feedbackSuccessAuxEqOverflow,
-                framesFeedbackSuccess);
-        printedAny = 1;
-      }
-      if (!printedAny) {
-        fprintf(fout, "  none\n");
-      }
-    } else {
-      fprintf(fout,
-              "[feedback_shift][alpha=%.5f] Feedback-success breakdown by ShiftMatrixGenerations: none (no successful feedback-assisted frames)\n",
-              alpha);
-    }
-  }
-}
-
-static void PrintUsage(const char *program)
-{
-  fprintf(stderr,
-    "Usage (named): %s --frames <N> --max-iter <N> [--code <CodeName>] --alpha <A> "
-    "[--nb-frames <N>] [--alpha-max <A>] [--alpha-min <A>] [--alpha-step <A>] [--decoder-config <path>] [--error-indexes <path>]\n"
-    "  Note: --alpha is optional when --error-indexes is used (deterministic mode).\n",
-    program);
-  fprintf(stderr,
-    "Usage (positional): %s <NbMonteCarlo> <NbIter> <CodeName> <alpha> "
-    "[NBframes [alpha_max [alpha_min [alpha_step]]]]\n",
-    program);
-}
-
-// Load error indexes from file (one index per line)
-static int LoadErrorIndexesFromFile(const char *filepath, int **outIndexes, int *outCount)
-{
-  FILE *f = fopen(filepath, "r");
-  if (f == NULL) {
-    fprintf(stderr, "Error: Could not open error indexes file: %s\n", filepath);
-    return 1;
-  }
-
-  // First pass: count lines
-  int count = 0;
-  int c;
-  while ((c = fgetc(f)) != EOF) {
-    if (c == '\n') {
-      count++;
-    }
-  }
-  // Handle case where last line doesn't have newline
-  fseek(f, -1, SEEK_END);
-  if ((c = fgetc(f)) != '\n' && ftell(f) > 0) {
-    count++;
-  }
-
-  if (count == 0) {
-    fprintf(stderr, "Warning: Error indexes file is empty: %s\n", filepath);
-    fclose(f);
-    *outIndexes = NULL;
-    *outCount = 0;
-    return 0;
-  }
-
-  // Allocate array
-  *outIndexes = (int *)malloc(count * sizeof(int));
-  if (*outIndexes == NULL) {
-    fprintf(stderr, "Error: Memory allocation failed for error indexes\n");
-    fclose(f);
-    return 1;
-  }
-
-  // Second pass: read indexes
-  rewind(f);
-  int idx = 0;
-  int lineNum = 0;
-  char line[64];
-  while (fgets(line, sizeof(line), f) != NULL && idx < count) {
-    lineNum++;
-    int index = atoi(line);
-    if (index < 0) {
-      fprintf(stderr, "Warning: Negative index at line %d: %d (skipping)\n", lineNum, index);
-      continue;
-    }
-    (*outIndexes)[idx++] = index;
-  }
-
-  fclose(f);
-  *outCount = idx;
-  return 0;
-}
-
-static int ParseNamedArgs(
-  int argc,
-  char *argv[],
-  int *nbMonteCarlo,
-  int *maxDecoderIterations,
-  char *codeName,
-  int codeNameLen,
-  float *alpha,
-  int *nbFrames,
-  float *alphaMax,
-  float *alphaMin,
-  float *alphaStep,
-  char *decoderConfigPath,
-  int decoderConfigPathLen,
-  int *hasDecoderConfigPath,
-  char *errorIndexesPath,
-  int errorIndexesPathLen,
-  int *hasErrorIndexesPath)
-{
-  int i;
-  int hasFrames = 0;
-  int hasMaxIter = 0;
-  int hasCode = 0;
-  int hasAlpha = 0;
-  int hasAlphaMax = 0;
-  int hasAlphaMin = 0;
-  int hasAlphaStep = 0;
-
-  *nbFrames = 0;
-  *hasDecoderConfigPath = 0;
-  *hasErrorIndexesPath = 0;
-
-  for (i = 1; i < argc; i++) {
-    const char *arg = argv[i];
-
-    if (strcmp(arg, "--help") == 0 || strcmp(arg, "-h") == 0) {
-      PrintUsage(argv[0]);
-      return 1;
-    }
-
-    if (strncmp(arg, "--", 2) != 0) {
-      fprintf(stderr, "Unknown positional token in named mode: %s\n", arg);
-      return 1;
-    }
-
-    if (i + 1 >= argc) {
-      fprintf(stderr, "Missing value for option: %s\n", arg);
-      return 1;
-    }
-
-    i++;
-    if (strcmp(arg, "--frames") == 0) {
-      *nbMonteCarlo = atoi(argv[i]);
-      hasFrames = 1;
-    } else if (strcmp(arg, "--max-iter") == 0) {
-      *maxDecoderIterations = atoi(argv[i]);
-      hasMaxIter = 1;
-    } else if (strcmp(arg, "--code") == 0) {
-      strncpy(codeName, argv[i], codeNameLen - 1);
-      codeName[codeNameLen - 1] = '\0';
-      hasCode = 1;
-    } else if (strcmp(arg, "--alpha") == 0) {
-      *alpha = (float)atof(argv[i]);
-      hasAlpha = 1;
-    } else if (strcmp(arg, "--nb-frames") == 0) {
-      *nbFrames = atoi(argv[i]);
-    } else if (strcmp(arg, "--alpha-max") == 0) {
-      *alphaMax = (float)atof(argv[i]);
-      hasAlphaMax = 1;
-    } else if (strcmp(arg, "--alpha-min") == 0) {
-      *alphaMin = (float)atof(argv[i]);
-      hasAlphaMin = 1;
-    } else if (strcmp(arg, "--alpha-step") == 0) {
-      *alphaStep = (float)atof(argv[i]);
-      hasAlphaStep = 1;
-    } else if (strcmp(arg, "--decoder-config") == 0) {
-      strncpy(decoderConfigPath, argv[i], decoderConfigPathLen - 1);
-      decoderConfigPath[decoderConfigPathLen - 1] = '\0';
-      *hasDecoderConfigPath = 1;
-    } else if (strcmp(arg, "--error-indexes") == 0) {
-      strncpy(errorIndexesPath, argv[i], errorIndexesPathLen - 1);
-      errorIndexesPath[errorIndexesPathLen - 1] = '\0';
-      *hasErrorIndexesPath = 1;
-    } else {
-      fprintf(stderr, "Unknown option: %s\n", arg);
-      return 1;
-    }
-  }
-
-  if (!hasFrames || !hasMaxIter) {
-    fprintf(stderr, "Missing required options in named mode.\n");
-    PrintUsage(argv[0]);
-    return 1;
-  }
-
-  // --alpha is required only when error indexes are NOT provided via CLI
-  // (if provided via config file, that is checked later in main)
-  if (!hasAlpha && !(*hasErrorIndexesPath)) {
-    fprintf(stderr, "Missing required option: --alpha (only optional when --error-indexes is used)\n");
-    PrintUsage(argv[0]);
-    return 1;
-  }
-
-  if (!hasAlpha) {
-    *alpha = 0.0f;
-  }
-
-  if (!hasCode) {
-    codeName[0] = '\0';
-  }
-
-  if (!hasAlphaMax) *alphaMax = *alpha;
-  if (!hasAlphaMin) *alphaMin = *alpha - 1.0f;
-  if (!hasAlphaStep) *alphaStep = 1.0f;
-
-  return 0;
-}
-
-static char *TrimLeftLocal(char *s)
-{
-  while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') {
-    s++;
-  }
-  return s;
-}
-
-static void TrimRightLocal(char *s)
-{
-  int n = (int)strlen(s);
-  while (n > 0) {
-    char c = s[n - 1];
-    if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
-      s[n - 1] = '\0';
-      n--;
-    } else {
-      break;
-    }
-  }
-}
-
-static int LoadCodeNameFromConfig(const char *filePath, char *codeName, int codeNameLen)
-{
-  FILE *f;
-  char line[1024];
-
-  if (filePath == NULL || codeName == NULL || codeNameLen <= 1) {
-    return 1;
-  }
-
-  f = fopen(filePath, "r");
-  if (f == NULL) {
-    return 1;
-  }
-
-  while (fgets(line, sizeof(line), f) != NULL) {
-    char *p = TrimLeftLocal(line);
-    char *eq;
-    char *k;
-    char *v;
-
-    TrimRightLocal(p);
-    if (*p == '\0' || *p == '#' || *p == ';') {
-      continue;
-    }
-
-    eq = strchr(p, '=');
-    if (eq == NULL) {
-      continue;
-    }
-
-    *eq = '\0';
-    k = TrimLeftLocal(p);
-    TrimRightLocal(k);
-    v = TrimLeftLocal(eq + 1);
-    TrimRightLocal(v);
-
-    if (strcmp(k, "code") == 0 && *v != '\0') {
-      strncpy(codeName, v, codeNameLen - 1);
-      codeName[codeNameLen - 1] = '\0';
-      fclose(f);
-      return 0;
-    }
-  }
-
-  fclose(f);
-  return 1;
-}
-
-/* Create all intermediate directories in path (POSIX-style or Windows). */
+/* Utility functions for file I/O and path handling */
 static void EnsureDir(const char *path)
 {
   char tmp[512];
@@ -436,369 +52,21 @@ static const char *DecoderTypeToName(DecoderType type)
   }
 }
 
-static void BuildErrorVnIndexList(
-  const int *decodedBits,
-  const int *codeword,
-  int codeLength,
-  char *out,
-  int outSize)
+static const char *DecoderTypeToBanner(DecoderType type)
 {
-  int i;
-  int pos = 0;
-  int wroteAny = 0;
-
-  if (out == NULL || outSize <= 0) {
-    return;
+  switch (type) {
+    case DECODER_TYPE_PGDBF:
+      return "-------------------------La-P-GDBF--------------------------------------------------\n";
+    case DECODER_TYPE_ML:
+      return "-------------------------La-ML-GDBF-------------------------------------------------\n";
+    case DECODER_TYPE_FEEDBACK_SHIFT:
+      return "-------------------------La-FEEDBACK-SHIFT-------------------------------------------\n";
+    case DECODER_TYPE_ML_FEEDBACK:
+      return "-------------------------La-ML-FEEDBACK----------------------------------------------\n";
+    case DECODER_TYPE_GDBF:
+    default:
+      return "-------------------------La-GDBF--------------------------------------------------\n";
   }
-
-  out[0] = '\0';
-
-  for (i = 0; i < codeLength; i++) {
-    if (decodedBits[i] != codeword[i]) {
-      int n;
-      if (wroteAny) {
-        n = snprintf(out + pos, (size_t)(outSize - pos), ";%d", i);
-      } else {
-        n = snprintf(out + pos, (size_t)(outSize - pos), "%d", i);
-      }
-
-      if (n < 0 || n >= (outSize - pos)) {
-        break;
-      }
-
-      pos += n;
-      wroteAny = 1;
-    }
-  }
-}
-
-static void BuildIndexListFromBuffer(
-  const int *indices,
-  int indexCount,
-  char *out,
-  int outSize)
-{
-  int i;
-  int pos = 0;
-
-  if (out == NULL || outSize <= 0) {
-    return;
-  }
-
-  out[0] = '\0';
-
-  if (indices == NULL || indexCount <= 0) {
-    return;
-  }
-
-  for (i = 0; i < indexCount; i++) {
-    int n;
-    if (i > 0) {
-      n = snprintf(out + pos, (size_t)(outSize - pos), ";%d", indices[i]);
-    } else {
-      n = snprintf(out + pos, (size_t)(outSize - pos), "%d", indices[i]);
-    }
-
-    if (n < 0 || n >= (outSize - pos)) {
-      return;
-    }
-
-    pos += n;
-  }
-}
-
-static void BuildMlProposedErrorOverlapList(
-  const int *mlProposedIndices,
-  int mlProposedCount,
-  const int *decodedBits,
-  const int *codeword,
-  int codeLength,
-  char *out,
-  int outSize)
-{
-  int i;
-  int pos = 0;
-  int wroteAny = 0;
-
-  if (out == NULL || outSize <= 0) {
-    return;
-  }
-
-  out[0] = '\0';
-
-  if (mlProposedIndices == NULL || mlProposedCount <= 0 || decodedBits == NULL || codeword == NULL) {
-    return;
-  }
-
-  for (i = 0; i < mlProposedCount; i++) {
-    int idx = mlProposedIndices[i];
-    if (idx >= 0 && idx < codeLength && decodedBits[idx] != codeword[idx]) {
-      int n;
-      if (wroteAny) {
-        n = snprintf(out + pos, (size_t)(outSize - pos), ";%d", idx);
-      } else {
-        n = snprintf(out + pos, (size_t)(outSize - pos), "%d", idx);
-      }
-
-      if (n < 0 || n >= (outSize - pos)) {
-        return;
-      }
-
-      pos += n;
-      wroteAny = 1;
-    }
-  }
-}
-
-static void BuildErrorVnEnergyHistoryList(
-  const int *decodedBits,
-  const int *codeword,
-  int codeLength,
-  const int *lastBitEnergyHistory,
-  int lastBitEnergyHistoryCount,
-  char *out,
-  int outSize)
-{
-  int vn;
-  int pos = 0;
-  int wroteAnyVn = 0;
-
-  if (out == NULL || outSize <= 0) {
-    return;
-  }
-
-  out[0] = '\0';
-
-  if (lastBitEnergyHistory == NULL || lastBitEnergyHistoryCount <= 0) {
-    return;
-  }
-
-  for (vn = 0; vn < codeLength; vn++) {
-    if (decodedBits[vn] != codeword[vn]) {
-      int h;
-      int n;
-
-      if (wroteAnyVn) {
-        n = snprintf(out + pos, (size_t)(outSize - pos), ";%d:", vn);
-      } else {
-        n = snprintf(out + pos, (size_t)(outSize - pos), "%d:", vn);
-      }
-      if (n < 0 || n >= (outSize - pos)) {
-        break;
-      }
-      pos += n;
-
-      for (h = 0; h < lastBitEnergyHistoryCount; h++) {
-        int e = lastBitEnergyHistory[h * codeLength + vn];
-        if (h > 0) {
-          n = snprintf(out + pos, (size_t)(outSize - pos), "|%d", e);
-        } else {
-          n = snprintf(out + pos, (size_t)(outSize - pos), "%d", e);
-        }
-        if (n < 0 || n >= (outSize - pos)) {
-          return;
-        }
-        pos += n;
-      }
-
-      wroteAnyVn = 1;
-    }
-  }
-}
-
-static void BuildGlobalMaxEnergyHistoryList(
-  const int *lastBitEnergyHistory,
-  int lastBitEnergyHistoryCount,
-  int variableNodeCount,
-  char *out,
-  int outSize)
-{
-  int h;
-  int pos = 0;
-
-  if (out == NULL || outSize <= 0) {
-    return;
-  }
-
-  out[0] = '\0';
-
-  if (lastBitEnergyHistory == NULL || lastBitEnergyHistoryCount <= 0 || variableNodeCount <= 0) {
-    return;
-  }
-
-  for (h = 0; h < lastBitEnergyHistoryCount; h++) {
-    int i;
-    int maxE = -2147483647;
-    int n;
-
-    for (i = 0; i < variableNodeCount; i++) {
-      int e = lastBitEnergyHistory[h * variableNodeCount + i];
-      if (e > maxE) {
-        maxE = e;
-      }
-    }
-
-    if (h > 0) {
-      n = snprintf(out + pos, (size_t)(outSize - pos), "|%d", maxE);
-    } else {
-      n = snprintf(out + pos, (size_t)(outSize - pos), "%d", maxE);
-    }
-
-    if (n < 0 || n >= (outSize - pos)) {
-      return;
-    }
-    pos += n;
-  }
-}
-
-static void BuildGlobalMaxVnIndexHistoryList(
-  const int *lastBitEnergyHistory,
-  int lastBitEnergyHistoryCount,
-  int variableNodeCount,
-  char *out,
-  int outSize)
-{
-  int h;
-  int pos = 0;
-
-  if (out == NULL || outSize <= 0) {
-    return;
-  }
-
-  out[0] = '\0';
-
-  if (lastBitEnergyHistory == NULL || lastBitEnergyHistoryCount <= 0 || variableNodeCount <= 0) {
-    return;
-  }
-
-  for (h = 0; h < lastBitEnergyHistoryCount; h++) {
-    int i;
-    int maxE = -2147483647;
-    int wroteAny = 0;
-    int n;
-
-    for (i = 0; i < variableNodeCount; i++) {
-      int e = lastBitEnergyHistory[h * variableNodeCount + i];
-      if (e > maxE) {
-        maxE = e;
-      }
-    }
-
-    if (h > 0) {
-      n = snprintf(out + pos, (size_t)(outSize - pos), "|");
-      if (n < 0 || n >= (outSize - pos)) {
-        return;
-      }
-      pos += n;
-    }
-
-    for (i = 0; i < variableNodeCount; i++) {
-      int e = lastBitEnergyHistory[h * variableNodeCount + i];
-      if (e == maxE) {
-        if (wroteAny) {
-          n = snprintf(out + pos, (size_t)(outSize - pos), "/%d", i);
-        } else {
-          n = snprintf(out + pos, (size_t)(outSize - pos), "%d", i);
-        }
-
-        if (n < 0 || n >= (outSize - pos)) {
-          return;
-        }
-        pos += n;
-        wroteAny = 1;
-      }
-    }
-  }
-}
-
-static void AppendMlOutcomeSummaryCsvPerAlpha(
-  const char *csvPath,
-  const char *resultFile,
-  int nbMonteCarlo,
-  int maxDecoderIterations,
-  int nbFramesStop,
-  float alphaValue,
-  float alphaMax,
-  float alphaMin,
-  float alphaStep,
-  long long framesTested,
-  long long framesDecodedClean,
-  long long framesBaselineOnlyDecoded,
-  long long framesMlNeeded,
-  long long framesMlEscaped,
-  long long framesMlNoEscape,
-  long long framesMlInvokedDecodedClean,
-  long long stagnationEvents,
-  long long mlCalls,
-  long long mlEscapes)
-{
-  FILE *f;
-  int csvExists;
-  int recreateCsv = 0;
-  double effectivenessPct;
-
-  if (csvPath == NULL || resultFile == NULL) {
-    return;
-  }
-
-  csvExists = (access(csvPath, 0) == 0);
-  if (csvExists) {
-    FILE *hdr = fopen(csvPath, "r");
-    if (hdr != NULL) {
-      char headerLine[1024];
-      if (fgets(headerLine, sizeof(headerLine), hdr) != NULL) {
-        if (strstr(headerLine, "frames_ml_invoked_decoded_clean") == NULL ||
-            strstr(headerLine, "ml_escape_effectiveness_pct") == NULL) {
-          recreateCsv = 1;
-        }
-      }
-      fclose(hdr);
-    }
-  }
-
-  f = fopen(csvPath, recreateCsv ? "w" : "a");
-  if (f == NULL) {
-    fprintf(stderr, "WARNING: cannot open ML summary CSV: %s\n", csvPath);
-    return;
-  }
-
-  if (!csvExists || recreateCsv) {
-    fprintf(f,
-      "result_file,nb_monte_carlo,max_iterations,nbframes_stop,"
-      "alpha,alpha_max,alpha_min,alpha_step,"
-      "frames_tested,frames_decoded_clean,frames_baseline_only_decoded,"
-      "frames_ml_needed,frames_ml_escaped,frames_ml_no_escape,frames_ml_invoked_decoded_clean,"
-      "ml_escape_effectiveness_pct,"
-      "stagnation_events,ml_calls,ml_escapes\n");
-  }
-
-  effectivenessPct = (framesMlNeeded > 0)
-    ? (100.0 * (double)framesMlEscaped / (double)framesMlNeeded)
-    : 0.0;
-
-  fprintf(f,
-    "%s,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%.6f,%lld,%lld,%lld\n",
-    resultFile,
-    nbMonteCarlo,
-    maxDecoderIterations,
-    nbFramesStop,
-    alphaValue,
-    alphaMax,
-    alphaMin,
-    alphaStep,
-    framesTested,
-    framesDecodedClean,
-    framesBaselineOnlyDecoded,
-    framesMlNeeded,
-    framesMlEscaped,
-    framesMlNoEscape,
-    framesMlInvokedDecodedClean,
-    effectivenessPct,
-    stagnationEvents,
-    mlCalls,
-    mlEscapes);
-
-  fclose(f);
 }
 
 int main(int argc, char *argv[])
@@ -821,8 +89,6 @@ int main(int argc, char *argv[])
   DecoderRuntimeStats decoderRuntimeStats;
   char decoderConfigPath[512] = "configs/decoder/default.cfg";
   int hasDecoderConfigPath = 0;
-  char errorIndexesPath[512] = "";
-  int hasErrorIndexesPath = 0;
 
   int NbMonteCarlo;
   int maxDecoderIterations;
@@ -866,6 +132,7 @@ int main(int argc, char *argv[])
   long long overallCorrectedBitsPerSuccessfulFrameMin = -1;
   long long overallCorrectedBitsPerSuccessfulFrameMax = 0;
 
+  /* ---- ARGUMENT PARSING ---- */
   if (argc > 1 && strncmp(argv[1], "--", 2) == 0) {
     if (ParseNamedArgs(
           argc,
@@ -881,10 +148,7 @@ int main(int argc, char *argv[])
           &alpha_step,
           decoderConfigPath,
           (int)sizeof(decoderConfigPath),
-          &hasDecoderConfigPath,
-          errorIndexesPath,
-          (int)sizeof(errorIndexesPath),
-          &hasErrorIndexesPath) != 0) {
+          &hasDecoderConfigPath) != 0) {
       return 1;
     }
   } else {
@@ -904,6 +168,7 @@ int main(int argc, char *argv[])
     alpha_step = (argc > 8) ? (float)atof(argv[8]) : 1.0f;
   }
 
+  /* ---- CONFIG LOADING ---- */
   DecoderConfigInitDefaults(&decoderConfig);
   if (access(decoderConfigPath, 0) == 0) {
     if (DecoderConfigLoadFromFile(&decoderConfig, decoderConfigPath) != 0) {
@@ -925,16 +190,10 @@ int main(int argc, char *argv[])
   DecoderConfigApplyEnv(&decoderConfig);
   memset(&decoderRuntimeStats, 0, sizeof(decoderRuntimeStats));
 
-  // Use error indexes path from config if not provided via command-line
-  if (!hasErrorIndexesPath && decoderConfig.errorIndexesPath[0] != '\0') {
-    strncpy(errorIndexesPath, decoderConfig.errorIndexesPath, sizeof(errorIndexesPath) - 1);
-    errorIndexesPath[sizeof(errorIndexesPath) - 1] = '\0';
-    hasErrorIndexesPath = 1;
-  }
-
   snprintf(matrixFilePath, sizeof(matrixFilePath), "codes/%s/%s_Dform", codeName, codeName);
   snprintf(baseMatrixPrefix, sizeof(baseMatrixPrefix), "codes/%s/%s_Base", codeName, codeName);
 
+  /* ---- INPUT VALIDATION ---- */
   if (NbMonteCarlo <= 0) {
     fprintf(stderr, "NbMonteCarlo must be > 0\n");
     return 1;
@@ -944,17 +203,15 @@ int main(int argc, char *argv[])
     return 1;
   }
   if (alpha < 0.0f || alpha > 1.0f) {
-    // Only validate alpha when not using deterministic error indexes
-    if (!hasErrorIndexesPath) {
-      fprintf(stderr, "alpha must be in [0, 1]\n");
-      return 1;
-    }
+    fprintf(stderr, "alpha must be in [0, 1]\n");
+    return 1;
   }
   if (alpha_step <= 0.0f) {
     fprintf(stderr, "alpha_step must be > 0\n");
     return 1;
   }
 
+  /* ---- MATRIX LOADING ---- */
   if (LoadSparseMatrixData(matrixFilePath, &matrix) != 0) {
     return 1;
   }
@@ -990,14 +247,9 @@ int main(int argc, char *argv[])
     }
   }
 
-#if GDBF
-  printf("-------------------------La-GDBF--------------------------------------------------\n");
-#endif
+  printf("%s", DecoderTypeToBanner(decoderConfig.decoderType));
 
-#if PGDBF
-  printf("-------------------------La-P-GDBF--------------------------------------------------\n");
-#endif
-
+  /* ---- RESULT DIRECTORY SETUP ---- */
   if (decoderConfig.enableDatasetCollection) {
     runType = "collect";
   } else {
@@ -1054,6 +306,7 @@ int main(int argc, char *argv[])
     }
   }
 
+  /* ---- MEMORY ALLOCATION ---- */
   workVector = (int *)calloc(matrix.N, sizeof(int));
   codeword = (int *)calloc(matrix.N, sizeof(int));
   receivedword = (int *)calloc(matrix.N, sizeof(int));
@@ -1123,7 +376,7 @@ int main(int argc, char *argv[])
   }
   }
 
-    if (workVector == NULL || codeword == NULL || receivedword == NULL || decodedBits == NULL ||
+  if (workVector == NULL || codeword == NULL || receivedword == NULL || decodedBits == NULL ||
       lastBitEnergyHistory == NULL ||
       mlProposedIndices == NULL ||
       bitEnergy == NULL || checkNodeSyndrome == NULL || layerVariableBuffer == NULL || shiftedLayerVariableBuffer == NULL) {
@@ -1147,31 +400,7 @@ int main(int argc, char *argv[])
 
   srand(RAND_SEED);
 
-  // Load error indexes if provided
-  int *errorIndexes = NULL;
-  int errorIndexCount = 0;
-  if (hasErrorIndexesPath && errorIndexesPath[0] != '\0') {
-    if (LoadErrorIndexesFromFile(errorIndexesPath, &errorIndexes, &errorIndexCount) != 0) {
-      fprintf(stderr, "Failed to load error indexes from file: %s\n", errorIndexesPath);
-      free(workVector);
-      free(codeword);
-      free(receivedword);
-      free(decodedBits);
-      free(lastBitEnergyHistory);
-      free(mlProposedIndices);
-      free(bitEnergy);
-      free(checkNodeSyndrome);
-      free(layerVariableBuffer);
-      free(shiftedLayerVariableBuffer);
-      fclose(fout);
-      FreeEncodingTransformData(&encoding);
-      FreeBaseMatrixData(&base);
-      FreeSparseMatrixData(&matrix);
-      return 1;
-    }
-    printf("Loaded %d error indexes from file: %s\n", errorIndexCount, errorIndexesPath);
-  }
-
+  /* ---- MAIN SIMULATION LOOP ---- */
   for (alpha = alpha_max; alpha > alpha_min; alpha -= alpha_step) {
     SimulationStats stats;
     long long alphaFeedbackSuccessAuxEqHist[AUX_EQ_HIST_MAX];
@@ -1200,7 +429,7 @@ int main(int argc, char *argv[])
       int usedIterations;
       int frameBitErrors;
       int addedAuxEquations = 0;
-      int shiftMatrixGenerations = 0;  /* Number of layer shift matrix proposals */
+      int shiftMatrixGenerations = 0;
       int maxEnergyBitsBeforeFeedbackMin = 0;
       int maxEnergyBitsBeforeFeedbackMax = 0;
       long long maxEnergyBitsBeforeFeedbackSum = 0;
@@ -1212,17 +441,7 @@ int main(int argc, char *argv[])
       long long mlEscapesBefore = decoderRuntimeStats.mlEscapes;
       long long mlCorrectedBitsBefore = decoderRuntimeStats.mlCorrectedBits;
 
-      // EncodeRandomCodeword(
-      //   encoding.Rank,
-      //   matrix.N,
-      //   encoding.SystematicMatrix,
-      //   encoding.ColumnPermutation,
-      //   workVector,
-      //   codeword);
-
       if (decoderConfig.quantumOnlySyndrome) {
-        // Quantum-only mode: generate a proper full codeword satisfying H·c = 0,
-        // apply noise to all N bits, no classical channel involved
         EncodeRandomCodeword(
           encoding.Rank,
           matrix.N,
@@ -1231,24 +450,15 @@ int main(int argc, char *argv[])
           workVector,
           codeword);
 
-        if (errorIndexes != NULL && errorIndexCount > 0) {
-          AddBscNoiseFromIndexes(codeword, receivedword, matrix.N, errorIndexes, errorIndexCount);
-        } else {
-          AddBscNoise(codeword, receivedword, matrix.N, alpha);
-        }
+        AddBscNoise(codeword, receivedword, matrix.N, alpha);
       } else {
-        // Standard split mode: x over quantum channel, parity over classical channel
         int *x = workVector;
         for (int i = 0; i < matrix.N - matrix.M; i++) {
           x[i] = rand() & 1;
         }
         EncodeSplitCodeword(&matrix, x, codeword);
 
-        if (errorIndexes != NULL && errorIndexCount > 0) {
-          AddBscNoiseFromIndexesSplit(codeword, receivedword, matrix.N - matrix.M, matrix.M, errorIndexes, errorIndexCount);
-        } else {
-          AddBscNoiseSplit(codeword, receivedword, matrix.N - matrix.M, matrix.M, alpha);
-        }
+        AddBscNoiseSplit(codeword, receivedword, matrix.N - matrix.M, matrix.M, alpha);
       }
 
       if (DecodeFrameWithConfig(
@@ -1280,8 +490,6 @@ int main(int argc, char *argv[])
             &decoderConfig,
             &decoderRuntimeStats,
             datasetFile,
-            errorIndexes,
-            errorIndexCount,
             nb,
             alpha) != 0) {
         fprintf(stderr, "Decoder error.\n");
@@ -1311,11 +519,11 @@ int main(int argc, char *argv[])
           alphaFramesDecodedClean++;
         }
 
-        {
-          long long frameMlCalls = decoderRuntimeStats.modelInferenceCalls - mlCallsBefore;
-          long long frameMlEscapes = decoderRuntimeStats.mlEscapes - mlEscapesBefore;
-          long long frameMlCorrectedBits = decoderRuntimeStats.mlCorrectedBits - mlCorrectedBitsBefore;
+        long long frameMlCalls = decoderRuntimeStats.modelInferenceCalls - mlCallsBefore;
+        long long frameMlEscapes = decoderRuntimeStats.mlEscapes - mlEscapesBefore;
+        long long frameMlCorrectedBits = decoderRuntimeStats.mlCorrectedBits - mlCorrectedBitsBefore;
 
+        {
           if (frameMlEscapes > 0) {
             overallFramesWithAppliedEscape++;
             if (cleanDecoded) {
@@ -1336,12 +544,6 @@ int main(int argc, char *argv[])
               overallMlCallsPerInvokedFrameMax = frameMlCalls;
             }
 
-            /*
-             * Escape-based effectiveness definition:
-             * - effective: ML was invoked and at least one ML mask was accepted
-             *   (i.e., produced a non-rolled-back escape action) in this frame.
-             * - not effective: ML was invoked but produced no accepted escape action.
-             */
             if (frameMlEscapes > 0) {
               overallFramesMlEscaped++;
               alphaFramesMlEscaped++;
@@ -1435,39 +637,40 @@ int main(int argc, char *argv[])
               mlProposedErrorOverlap);
           }
         }
-      }
 
-      if (addedAuxEquations < 0) {
-        addedAuxEquations = 0;
-      }
+        if (addedAuxEquations < 0) {
+          addedAuxEquations = 0;
+        }
 
-      if (cleanDecoded) {
-        if (unsuccessfulRoundsToSyndrome0 >= 0) {
-          alphaFeedbackSuccess++;
-          if (shiftMatrixGenerations < AUX_EQ_HIST_MAX) {
-            alphaFeedbackSuccessAuxEqHist[shiftMatrixGenerations]++;
+        if (cleanDecoded) {
+          if (unsuccessfulRoundsToSyndrome0 >= 0) {
+            alphaFeedbackSuccess++;
+            if (shiftMatrixGenerations < AUX_EQ_HIST_MAX) {
+              alphaFeedbackSuccessAuxEqHist[shiftMatrixGenerations]++;
+            } else {
+              alphaFeedbackSuccessAuxEqOverflow++;
+            }
           } else {
-            alphaFeedbackSuccessAuxEqOverflow++;
+            alphaNoFeedbackSuccess++;
           }
         } else {
-          alphaNoFeedbackSuccess++;
+          alphaNotManagedDecode++;
         }
-      } else {
-        alphaNotManagedDecode++;
-      }
 
-      UpdateSimulationStats(
-        &stats,
-        frameBitErrors,
-        isCodeword,
-        usedIterations,
-        maxDecoderIterations,
-        addedAuxEquations,
-        unsuccessfulRoundsToSyndrome0,
-        maxEnergyBitsBeforeFeedbackMin,
-        maxEnergyBitsBeforeFeedbackMax,
-        maxEnergyBitsBeforeFeedbackSum,
-        maxEnergyBitsBeforeFeedbackCount);
+        UpdateSimulationStats(
+          &stats,
+          frameBitErrors,
+          isCodeword,
+          usedIterations,
+          maxDecoderIterations,
+          addedAuxEquations,
+          unsuccessfulRoundsToSyndrome0,
+          maxEnergyBitsBeforeFeedbackMin,
+          maxEnergyBitsBeforeFeedbackMax,
+          maxEnergyBitsBeforeFeedbackSum,
+          maxEnergyBitsBeforeFeedbackCount,
+          (int)frameMlCalls);
+      }
 
       if (stats.nbtestedframes % 1000000 == 0) {
         PrintStatsLine(
@@ -1533,6 +736,7 @@ int main(int argc, char *argv[])
     }
   }
 
+  /* ---- CLEANUP ---- */
   free(workVector);
   free(codeword);
   free(receivedword);
@@ -1543,7 +747,6 @@ int main(int argc, char *argv[])
   free(checkNodeSyndrome);
   free(layerVariableBuffer);
   free(shiftedLayerVariableBuffer);
-  free(errorIndexes);
 
   fclose(fout);
   FreeEncodingTransformData(&encoding);
@@ -1553,6 +756,7 @@ int main(int argc, char *argv[])
   if (datasetFile) fclose(datasetFile);
   if (mlFailureFile) fclose(mlFailureFile);
 
+  /* ---- FINAL DIAGNOSTICS ---- */
   if (decoderConfig.decoderType == DECODER_TYPE_ML || decoderConfig.decoderType == DECODER_TYPE_ML_FEEDBACK) {
     printf("\n=== ML Escape Diagnostics ===\n");
     printf("  Stagnation events detected : %lld\n", decoderRuntimeStats.stagnationEvents);

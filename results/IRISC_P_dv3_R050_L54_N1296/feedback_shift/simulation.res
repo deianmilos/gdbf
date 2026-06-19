@@ -10,3 +10,11 @@ alpha	NbEr(BER)			NbFer(FER)			Nbtested		IterAver(Itermax)	FailedBits(min/avg/ma
 [feedback_shift][alpha=0.02000] Frame outcome (% of tested): no_feedback_success=98.62%, feedback_success=0.15%, not_managed_decode=1.23%
 [feedback_shift][alpha=0.02000] Feedback-success breakdown by ShiftMatrixGenerations (% among feedback_success frames):
   gen=3: 16.67% (2/12) |   gen=4: 33.33% (4/12) |   gen=5: 8.33% (1/12) |   gen=7: 25.00% (3/12) |   gen=8: 16.67% (2/12)
+alpha	NbEr(BER)			NbFer(FER)			Nbtested		IterAver(Itermax)	SuccessIter(min/avg/max)	FailedBits(min/avg/max)	MLInferences(min/avg/max)	AddedAuxEq(min/avg/max)	UnsuccSRRoundsToS0(min/avg/max)	MaxEnergyBitsBeforeFB(min/avg/max)
+0.00000	         0 (0.000000000000000)		   0 (0.000000000000000)		       100	1.00(1)		1/1.0/1		-/-/-	-/-/-	-/-/-	-/-/-
+[feedback_shift][alpha=0.00000] Frame outcome (% of tested): no_feedback_success=100.00%, feedback_success=0.00%, not_managed_decode=0.00%
+[feedback_shift][alpha=0.00000] Feedback-success breakdown by ShiftMatrixGenerations: none (no successful feedback-assisted frames)
+alpha	NbEr(BER)			NbFer(FER)			Nbtested		IterAver(Itermax)	SuccessIter(min/avg/max)	FailedBits(min/avg/max)	MLInferences(min/avg/max)	AddedAuxEq(min/avg/max)	UnsuccSRRoundsToS0(min/avg/max)	MaxEnergyBitsBeforeFB(min/avg/max)
+0.00000	         0 (0.000000000000000)		   0 (0.000000000000000)		        50	1.00(1)		1/1.0/1		-/-/-	-/-/-	-/-/-	-/-/-
+[feedback_shift][alpha=0.00000] Frame outcome (% of tested): no_feedback_success=100.00%, feedback_success=0.00%, not_managed_decode=0.00%
+[feedback_shift][alpha=0.00000] Feedback-success breakdown by ShiftMatrixGenerations: none (no successful feedback-assisted frames)

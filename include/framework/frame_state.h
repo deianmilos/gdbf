@@ -63,8 +63,6 @@ typedef struct FrameState {
   const DecoderConfig  *config;
   DecoderRuntimeStats  *runtimeStats;
   FILE                 *datasetFile;
-  const int            *errorIndexes;
-  int                   errorIndexCount;
   int                   frameNumber;
   float                 alpha;
 
@@ -155,6 +153,7 @@ typedef struct FrameState {
   int            maxEnergy;
   int            maxEnergyBitIdx;
   int            isStuck;
+  int            firstStuckIter;      /* iteration when first stuck state detected (-1 if never stuck) */
   int            stuckSnapshotCollected;
   StagnationState stagnationState;
 
@@ -168,10 +167,6 @@ typedef struct FrameState {
   /* ---- Original shift matrix backup (restored after frame) ---- */
   int *originalShiftMatrix;
   int  shiftMatrixSize;
-
-  /* ---- Error index tracking (optional) ---- */
-  FILE *errorIndexLogFile;
-  int  *errorIndexCorrectedIter;
 
 } FrameState;
 

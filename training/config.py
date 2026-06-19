@@ -1,6 +1,7 @@
 from pathlib import Path
 
-# Defaults
+# Legacy helpers.
+# Training hyperparameters are defined in JSON config files under configs/ml.
 DEFAULT_CODE_NAME = "wifin_r_1_2"
 MODEL_DIR = Path("model")
 
@@ -19,15 +20,3 @@ def model_output_paths(code_name: str):
 		"ref_code": MODEL_DIR / f"as_model_{code_name}_ref.h",
 		"quantized_code": MODEL_DIR / f"as_model_{code_name}_quantized.h",
 	}
-
-# Training
-TEST_SPLIT = 0.2
-EPOCHS = 500
-BATCH_SIZE = 32
-HIDDEN1 = 32
-HIDDEN2 = 16
-LEARNING_RATE = 0.001
-THRESHOLD = 0.4
-MIN_TRAIN_SAMPLES_WARNING = 50
-MAX_FLIP_BUDGET = 3
-BUDGET_LOSS_WEIGHT = 0.35

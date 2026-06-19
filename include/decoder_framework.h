@@ -15,6 +15,12 @@ typedef enum {
   DECODER_TYPE_ML_FEEDBACK = 4
 } DecoderType;
 
+typedef enum {
+  ML_TRIGGER_NONE = 0,
+  ML_TRIGGER_PERIODIC = 1,
+  ML_TRIGGER_STATE_BASED = 2
+} MLTriggerMode;
+
 typedef struct {
   DecoderType decoderType;
   CandidateSelectionType candidateSelection;
@@ -23,8 +29,6 @@ typedef struct {
   int featureFlags;
   int featureSelectionExplicit;
   int enableDatasetCollection;
-  int rolloutIters;
-  int rolloutTargetFlipCount;
   double pgdbfFlipProbability;
   int allowedWorsening;
   int feedbackTriggerIter;
@@ -40,12 +44,17 @@ typedef struct {
   int feedbackRowSelectionMode;  /* 0 = max severity (default), 1 = min non-zero severity */
   int feedbackShiftSourceMode;   /* 0 = fixed (sat-check guided + fallback), 1 = random, 2 = fixed-number */
   int feedbackShiftFixedDelta;   /* used when feedbackShiftSourceMode == 2 */
+  int feedbackContinueFromCurrent; /* 1 = continue from current decoded state, 0 = restart from received word after feedback apply */
   int mlInvokeOnlyIfBaselineFails;
-  int mlPeriodicInterval;
-  int errorIndexesLoggingEnabled;
+  MLTriggerMode mlTriggerMode;        /* NONE | PERIODIC | STATE_BASED */
+  int mlPeriodicInterval;             /* periodic: ML every N iterations */
+  int mlSingleTriggerIter;            /* one-shot ML trigger at this 1-based iteration (0 disables) */
+  int mlStagnationPeriodicInterval;   /* state-based: periodic ML while stagnating (0 disables) */
+  int mlOscillationPeriodicInterval;  /* state-based: periodic ML while oscillating (0 disables) */
+  int mlStartAfterStuck;              /* 1 = enable periodic ML only after first stuck state, 0 = disable (default) */
+  int mlMaxEnergySeedMode; /* 0 = single max-energy seed, 1 = run inference for all max-energy seeds */
   int quantumOnlySyndrome;
   StagnationConfig stagnation;
-  char errorIndexesPath[512];
 } DecoderConfig;
 
 typedef struct {
@@ -92,8 +101,6 @@ int DecodeFrameWithConfig(
   const DecoderConfig *config,
   DecoderRuntimeStats *runtimeStats,
   FILE *datasetFile,
-  const int *errorIndexes,
-  int errorIndexCount,
   int frameNumber,
   float alpha);
 

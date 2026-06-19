@@ -13,6 +13,12 @@ typedef struct
   int NbBitError;
   int NbUnDetectedErrors;
   
+  /* Successful frame iteration statistics */
+  int minSuccessIter;
+  int maxSuccessIter;
+  long long sumSuccessIter;
+  int successFrameCount;
+
   /* Failed frame bit error statistics */
   int minFailedBitErrors;
   int maxFailedBitErrors;
@@ -35,6 +41,12 @@ typedef struct
   int maxMaxEnergyBitsBeforeFeedback;
   long long sumMaxEnergyBitsBeforeFeedback;
   long long countMaxEnergyBitsBeforeFeedback;
+
+  /* ML inference calls per successful frame */
+  int minMLInferencesPerFrame;
+  int maxMLInferencesPerFrame;
+  long long sumMLInferencesPerFrame;
+  int mlInferenceFrameCount;
 } SimulationStats;
 
 void ResetSimulationStats(SimulationStats *stats);
@@ -49,7 +61,8 @@ void UpdateSimulationStats(
   int maxEnergyBitsBeforeFeedbackMin,
   int maxEnergyBitsBeforeFeedbackMax,
   long long maxEnergyBitsBeforeFeedbackSum,
-  int maxEnergyBitsBeforeFeedbackCount);
+  int maxEnergyBitsBeforeFeedbackCount,
+  int mlInferencesThisFrame);
 void PrintStatsHeader(FILE *fout, int showAuxEquationStats, int circulantSize);
 void PrintStatsLine(
   float alpha,
