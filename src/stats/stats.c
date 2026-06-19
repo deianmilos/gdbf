@@ -121,8 +121,8 @@ void UpdateSimulationStats(
     stats->sumSuccessIter += usedIterations;
     if (usedIterations < stats->minSuccessIter) stats->minSuccessIter = usedIterations;
 
-    /* Track ML inferences for successful frames */
-    if (mlInferencesThisFrame >= 0) {
+    /* Track ML inferences only for frames where ML was actually invoked. */
+    if (mlInferencesThisFrame > 0) {
       stats->mlInferenceFrameCount++;
       stats->sumMLInferencesPerFrame += mlInferencesThisFrame;
       if (mlInferencesThisFrame < stats->minMLInferencesPerFrame) {

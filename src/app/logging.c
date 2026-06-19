@@ -457,8 +457,8 @@ void AppendMlOutcomeSummaryCsvPerAlpha(
     if (hdr != NULL) {
       char headerLine[1024];
       if (fgets(headerLine, sizeof(headerLine), hdr) != NULL) {
-        if (strstr(headerLine, "frames_ml_invoked_decoded_clean") == NULL ||
-            strstr(headerLine, "ml_escape_effectiveness_pct") == NULL) {
+        if (strstr(headerLine, "frames_with_ml_invocation_decoded_clean") == NULL ||
+            strstr(headerLine, "applied_ml_escape_frame_rate_pct") == NULL) {
           recreateCsv = 1;
         }
       }
@@ -476,10 +476,10 @@ void AppendMlOutcomeSummaryCsvPerAlpha(
     fprintf(f,
       "result_file,nb_monte_carlo,max_iterations,nbframes_stop,"
       "alpha,alpha_max,alpha_min,alpha_step,"
-      "frames_tested,frames_decoded_clean,frames_baseline_only_decoded,"
-      "frames_ml_needed,frames_ml_escaped,frames_ml_no_escape,frames_ml_invoked_decoded_clean,"
-      "ml_escape_effectiveness_pct,"
-      "stagnation_events,ml_calls,ml_escapes\n");
+      "frames_tested,frames_decoded_clean,frames_decoded_clean_without_ml_invocation,"
+      "frames_with_ml_invocation,frames_with_applied_ml_escape,frames_with_ml_invocation_no_applied_escape,frames_with_ml_invocation_decoded_clean,"
+      "applied_ml_escape_frame_rate_pct,"
+      "total_stagnation_events,total_ml_predict_calls,total_applied_ml_escape_actions\n");
   }
 
   effectivenessPct = (framesMlNeeded > 0)
@@ -507,6 +507,126 @@ void AppendMlOutcomeSummaryCsvPerAlpha(
     stagnationEvents,
     mlCalls,
     mlEscapes);
+
+  fclose(f);
+}
+
+void AppendMlDiagnosticsCsvOverall(
+  const char *csvPath,
+  const char *resultFile,
+  int nbMonteCarlo,
+  int maxDecoderIterations,
+  int nbFramesStop,
+  float alphaValue,
+  float alphaMax,
+  float alphaMin,
+  float alphaStep,
+  long long stagnationEvents,
+  long long mlCounterfactualSkips,
+  long long mlPredictCalls,
+  long long mlEscapesApplied,
+  long long bitsCorrectedByMl,
+  long long framesTested,
+  long long framesDecodedClean,
+  long long framesBaselineOnlyDecoded,
+  long long framesMlInvoked,
+  long long appliedMlEscapeActionsInCleanFrames,
+  long long failedFramesMlInvoked,
+  long long failedFramesNoMlInvocation,
+  long long framesWithSuccessfulMl,
+  long long minMlCallsPerInvokedFrame,
+  long long maxMlCallsPerInvokedFrame,
+  long long sumMlCallsPerInvokedFrame,
+  long long minCorrectedBitsPerSuccessfulMlFrame,
+  long long maxCorrectedBitsPerSuccessfulMlFrame,
+  long long sumCorrectedBitsPerSuccessfulMlFrame)
+{
+  FILE *f;
+  int csvExists;
+  int recreateCsv = 0;
+  double appliedMlEscapeActionsInCleanFramesPct;
+  double avgMlCallsPerInvokedFrame;
+  double avgCorrectedBitsPerSuccessfulMlFrame;
+
+  if (csvPath == NULL || resultFile == NULL) {
+    return;
+  }
+
+  csvExists = (access(csvPath, 0) == 0);
+  if (csvExists) {
+    FILE *hdr = fopen(csvPath, "r");
+    if (hdr != NULL) {
+      char headerLine[2048];
+      if (fgets(headerLine, sizeof(headerLine), hdr) != NULL) {
+        if (strstr(headerLine, "total_ml_counterfactual_skips") == NULL ||
+            strstr(headerLine, "applied_ml_escape_actions_in_clean_frames_pct") == NULL) {
+          recreateCsv = 1;
+        }
+      }
+      fclose(hdr);
+    }
+  }
+
+  f = fopen(csvPath, recreateCsv ? "w" : "a");
+  if (f == NULL) {
+    fprintf(stderr, "WARNING: cannot open ML diagnostics CSV: %s\n", csvPath);
+    return;
+  }
+
+  if (!csvExists || recreateCsv) {
+    fprintf(f,
+      "result_file,nb_monte_carlo,max_iterations,nbframes_stop,"
+      "alpha,alpha_max,alpha_min,alpha_step,"
+      "total_stagnation_events,total_ml_counterfactual_skips,total_ml_predict_calls,total_applied_ml_escape_actions,total_bits_corrected_by_ml,"
+      "frames_tested,frames_decoded_clean,frames_decoded_clean_without_ml_invocation,frames_with_ml_invocation,"
+      "failed_frames_with_ml_invocation,failed_frames_without_ml_invocation,frames_with_applied_ml_escape,"
+      "applied_ml_escape_actions_in_clean_frames,applied_ml_escape_actions_in_clean_frames_pct,"
+      "min_ml_calls_per_ml_invoked_frame,max_ml_calls_per_ml_invoked_frame,avg_ml_calls_per_ml_invoked_frame,"
+      "min_corrected_bits_per_frame_with_applied_ml_escape,max_corrected_bits_per_frame_with_applied_ml_escape,avg_corrected_bits_per_frame_with_applied_ml_escape\n");
+  }
+
+  appliedMlEscapeActionsInCleanFramesPct = (mlEscapesApplied > 0)
+    ? (100.0 * (double)appliedMlEscapeActionsInCleanFrames / (double)mlEscapesApplied)
+    : 0.0;
+
+  avgMlCallsPerInvokedFrame = (framesMlInvoked > 0)
+    ? ((double)sumMlCallsPerInvokedFrame / (double)framesMlInvoked)
+    : -1.0;
+
+  avgCorrectedBitsPerSuccessfulMlFrame = (framesWithSuccessfulMl > 0)
+    ? ((double)sumCorrectedBitsPerSuccessfulMlFrame / (double)framesWithSuccessfulMl)
+    : -1.0;
+
+  fprintf(f,
+    "%s,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%.6f,%lld,%lld,%.6f,%lld,%lld,%.6f\n",
+    resultFile,
+    nbMonteCarlo,
+    maxDecoderIterations,
+    nbFramesStop,
+    alphaValue,
+    alphaMax,
+    alphaMin,
+    alphaStep,
+    stagnationEvents,
+    mlCounterfactualSkips,
+    mlPredictCalls,
+    mlEscapesApplied,
+    bitsCorrectedByMl,
+    framesTested,
+    framesDecodedClean,
+    framesBaselineOnlyDecoded,
+    framesMlInvoked,
+    appliedMlEscapeActionsInCleanFrames,
+    failedFramesMlInvoked,
+    failedFramesNoMlInvocation,
+    framesWithSuccessfulMl,
+    appliedMlEscapeActionsInCleanFramesPct,
+    (framesMlInvoked > 0) ? minMlCallsPerInvokedFrame : -1,
+    (framesMlInvoked > 0) ? maxMlCallsPerInvokedFrame : -1,
+    avgMlCallsPerInvokedFrame,
+    (framesWithSuccessfulMl > 0) ? minCorrectedBitsPerSuccessfulMlFrame : -1,
+    (framesWithSuccessfulMl > 0) ? maxCorrectedBitsPerSuccessfulMlFrame : -1,
+    avgCorrectedBitsPerSuccessfulMlFrame);
 
   fclose(f);
 }

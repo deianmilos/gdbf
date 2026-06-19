@@ -85,4 +85,34 @@ void AppendMlOutcomeSummaryCsvPerAlpha(
   long long mlCalls,
   long long mlEscapes);
 
+void AppendMlDiagnosticsCsvOverall(
+  const char *csvPath,
+  const char *resultFile,
+  int nbMonteCarlo,
+  int maxDecoderIterations,
+  int nbFramesStop,
+  float alphaValue,
+  float alphaMax,
+  float alphaMin,
+  float alphaStep,
+  long long stagnationEvents,
+  long long mlCounterfactualSkips,
+  long long mlPredictCalls,
+  long long mlEscapesApplied,
+  long long bitsCorrectedByMl,
+  long long framesTested,
+  long long framesDecodedClean,
+  long long framesBaselineOnlyDecoded,
+  long long framesMlInvoked,
+  long long appliedMlEscapeActionsInCleanFrames,
+  long long failedFramesMlInvoked,
+  long long failedFramesNoMlInvocation,
+  long long framesWithSuccessfulMl,
+  long long minMlCallsPerInvokedFrame,
+  long long maxMlCallsPerInvokedFrame,
+  long long sumMlCallsPerInvokedFrame,
+  long long minCorrectedBitsPerSuccessfulMlFrame,
+  long long maxCorrectedBitsPerSuccessfulMlFrame,
+  long long sumCorrectedBitsPerSuccessfulMlFrame);
+
 #endif /* LOGGING_H */

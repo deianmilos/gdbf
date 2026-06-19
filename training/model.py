@@ -162,17 +162,6 @@ def train_pytorch_mask_only(X, y, settings=None):
     return model, mean, std, output_bits, metadata
 
 
-def train_pytorch_variant(X, y, variant="mask_only", settings=None):
-    if variant != "mask_only":
-        raise ValueError("Only 'mask_only' variant is supported in this training pipeline.")
-    return train_pytorch_mask_only(X, y, settings=settings)
-
-
-def train_pytorch(X, y):
-    model, mean, std, output_bits, _ = train_pytorch_mask_only(X, y, settings=None)
-    return model, mean, std, output_bits
-
-
 def extract_weights_pytorch(model):
     state = model.state_dict()
 
