@@ -82,6 +82,7 @@ int main(int argc, char *argv[])
   char resultDir[512];
   char resultFileName[512];
   char mlSummaryCsvPath[512];
+  char mlDiagnosticsCsvPath[512];
   char mlFailureCsvPath[512];
   FILE *mlFailureFile = NULL;
   const char *runType;
@@ -257,9 +258,10 @@ int main(int argc, char *argv[])
   }
   snprintf(resultDir, sizeof(resultDir), "results/%s/%s", codeName, runType);
   EnsureDir(resultDir);
-  snprintf(resultFileName, sizeof(resultFileName), "%s/simulation.res", resultDir);
-  snprintf(mlSummaryCsvPath, sizeof(mlSummaryCsvPath), "%s/ml_outcome_summary.csv", resultDir);
-  snprintf(mlFailureCsvPath, sizeof(mlFailureCsvPath), "%s/ml_failure_cases.csv", resultDir);
+  snprintf(resultFileName, sizeof(resultFileName), "%s/simulation_4it.res", resultDir);
+  snprintf(mlSummaryCsvPath, sizeof(mlSummaryCsvPath), "%s/ml_outcome_summary_4it.csv", resultDir);
+  snprintf(mlDiagnosticsCsvPath, sizeof(mlDiagnosticsCsvPath), "%s/ml_diagnostics_4it.csv", resultDir);
+  snprintf(mlFailureCsvPath, sizeof(mlFailureCsvPath), "%s/ml_failure_cases_4it.csv", resultDir);
 
   fout = fopen(resultFileName, "a+");
   if (fout == NULL) {
@@ -758,56 +760,40 @@ int main(int argc, char *argv[])
 
   /* ---- FINAL DIAGNOSTICS ---- */
   if (decoderConfig.decoderType == DECODER_TYPE_ML || decoderConfig.decoderType == DECODER_TYPE_ML_FEEDBACK) {
-    printf("\n=== ML Escape Diagnostics ===\n");
-    printf("  Stagnation events detected : %lld\n", decoderRuntimeStats.stagnationEvents);
-    printf("  ML counterfactual skips    : %lld\n", decoderRuntimeStats.mlCounterfactualSkips);
-    printf("  ML predict() calls         : %lld\n", decoderRuntimeStats.modelInferenceCalls);
-    printf("  ML escapes applied         : %lld\n", decoderRuntimeStats.mlEscapes);
-    printf("  Bits corrected by ML       : %lld\n", decoderRuntimeStats.mlCorrectedBits);
+    AppendMlDiagnosticsCsvOverall(
+      mlDiagnosticsCsvPath,
+      resultFileName,
+      NbMonteCarlo,
+      maxDecoderIterations,
+      NBframes,
+      alpha,
+      alpha_max,
+      alpha_min,
+      alpha_step,
+      decoderRuntimeStats.stagnationEvents,
+      decoderRuntimeStats.mlCounterfactualSkips,
+      decoderRuntimeStats.modelInferenceCalls,
+      decoderRuntimeStats.mlEscapes,
+      decoderRuntimeStats.mlCorrectedBits,
+      overallFramesTested,
+      overallFramesDecodedClean,
+      overallFramesBaselineOnlyDecoded,
+      overallFramesMlNeeded,
+      overallEscapeActionsInCleanFrames,
+      overallFailedFramesMlInvoked,
+      overallFailedFramesNoMlInvocation,
+      overallFramesWithSuccessfulMl,
+      overallMlCallsPerInvokedFrameMin,
+      overallMlCallsPerInvokedFrameMax,
+      overallMlCallsPerInvokedFrameSum,
+      overallCorrectedBitsPerSuccessfulFrameMin,
+      overallCorrectedBitsPerSuccessfulFrameMax,
+      overallCorrectedBitsPerSuccessfulFrameSum);
 
-    if (overallFramesTested > 0) {
-      printf("\n=== Frame-Level Outcome Summary ===\n");
-      printf("  Frames tested                          : %lld\n", overallFramesTested);
-      printf("  Frames decoded clean                   : %lld\n", overallFramesDecodedClean);
-      printf("  Decoded by baseline GDBF only          : %lld\n", overallFramesBaselineOnlyDecoded);
-      printf("  Stuck-triggered frames (ML invoked)    : %lld\n", overallFramesMlNeeded);
-      printf("  ML escape success (applied escapes)    : %.2f%%\n",
-             (decoderRuntimeStats.mlEscapes > 0)
-               ? (100.0 * (double)overallEscapeActionsInCleanFrames / (double)decoderRuntimeStats.mlEscapes)
-               : 0.0);
-
-      printf("\n=== Failure Breakdown ===\n");
-      printf("  Failed frames with ML invoked          : %lld\n", overallFailedFramesMlInvoked);
-      printf("  Failed frames with no ML invocation    : %lld\n", overallFailedFramesNoMlInvocation);
-
-      printf("\n=== ML Calls Per Invoked Frame ===\n");
-      if (overallFramesWithMlInvocation > 0) {
-        printf("  Min ML calls/frame                     : %lld\n", overallMlCallsPerInvokedFrameMin);
-        printf("  Max ML calls/frame                     : %lld\n", overallMlCallsPerInvokedFrameMax);
-        printf("  Avg ML calls/frame                     : %.2f\n",
-               (double)overallMlCallsPerInvokedFrameSum / (double)overallFramesWithMlInvocation);
-      } else {
-        printf("  Min ML calls/frame                     : n/a\n");
-        printf("  Max ML calls/frame                     : n/a\n");
-        printf("  Avg ML calls/frame                     : n/a\n");
-      }
-
-      printf("\n=== Corrected Bits Per Successful ML Frame ===\n");
-      if (overallFramesWithSuccessfulMl > 0) {
-        printf("  Min corrected bits/frame               : %lld\n", overallCorrectedBitsPerSuccessfulFrameMin);
-        printf("  Max corrected bits/frame               : %lld\n", overallCorrectedBitsPerSuccessfulFrameMax);
-        printf("  Avg corrected bits/frame               : %.2f\n",
-               (double)overallCorrectedBitsPerSuccessfulFrameSum / (double)overallFramesWithSuccessfulMl);
-      } else {
-        printf("  Min corrected bits/frame               : n/a\n");
-        printf("  Max corrected bits/frame               : n/a\n");
-        printf("  Avg corrected bits/frame               : n/a\n");
-      }
-    }
-
-    printf("  CSV summary written to               : %s\n", mlSummaryCsvPath);
+    printf("\nML diagnostics CSV written to        : %s\n", mlDiagnosticsCsvPath);
+    printf("  Per-alpha ML summary CSV written to : %s\n", mlSummaryCsvPath);
     if (mlFailureFile != NULL) {
-      printf("  Failure cases CSV written to         : %s\n", mlFailureCsvPath);
+      printf("  ML failure cases CSV written to      : %s\n", mlFailureCsvPath);
     }
   }
 

@@ -1,3 +1,6 @@
+# DEPRECATED — use plot_from_config.py instead.
+# This script is a legacy FER-only plotter with hardcoded CLI inputs.
+# Run: python visualize/plot_from_config.py --config <your_json_config>
 import argparse
 import re
 from dataclasses import dataclass

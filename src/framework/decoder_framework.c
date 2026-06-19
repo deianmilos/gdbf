@@ -125,6 +125,7 @@ int DecodeFrameWithConfig(
 {
   FrameState fs;
   int iter;
+  int mlCutoffIter;
 
   if (base == NULL || receivedword == NULL || codeword == NULL ||
       decodedBits == NULL || bitEnergy == NULL || checkNodeSyndrome == NULL ||
@@ -222,6 +223,11 @@ int DecodeFrameWithConfig(
   *usedIterations = 0;
   fs.recentEnergyCount = 0;
 
+  /* Reserve the last 10 iterations for baseline-only perturbation.
+   * If maxDecoderIterations <= 10, ML is disabled for the whole frame. */
+  mlCutoffIter = maxDecoderIterations - 10;
+  if (mlCutoffIter < 0) mlCutoffIter = 0;
+
   /* ================================================================
    * MAIN DECODE LOOP
    * ================================================================ */
@@ -301,8 +307,10 @@ int DecodeFrameWithConfig(
     if (fbr == FEEDBACK_CONTINUE_ITER) continue;
 
     /* -- 6. ML round: candidate-driven bit flips ------------------- */
-    mlr = RunMlRound(&fs);
-    if (mlr == ML_CONTINUE_ITER) continue;
+    if (iter < mlCutoffIter) {
+      mlr = RunMlRound(&fs);
+      if (mlr == ML_CONTINUE_ITER) continue;
+    }
 
     /* -- 7. Core perturbation: baseline GDBF flip ------------------ */
     FlipAtMaxEnergyTrack(
