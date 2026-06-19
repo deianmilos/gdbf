@@ -1,12 +1,8 @@
 """
-Train absorbing-set escape models and export C headers.
-
-Supports multiple variants in one run:
-- budgeted (budget head + top-k)
-- mask_only (direct mask prediction)
+Train corrective-mask (mask-only) escape model and export C headers.
 
 Usage:
-    python training/train.py [--config training/configs/default.json] [--code CODE_NAME]
+    python training/train.py [--config configs/ml/default.json] [--code CODE_NAME]
 """
 
 import argparse
@@ -14,23 +10,17 @@ import json
 from pathlib import Path
 
 import numpy as np
-
-from config import (
-    DEFAULT_CODE_NAME,
-    MIN_TRAIN_SAMPLES_WARNING,
-    dataset_path,
-)
 from data import load_data
 from export import export_quantized_header, export_ref_header
-from model import extract_weights_pytorch, require_torch, train_pytorch_variant
+from model import extract_weights_pytorch, require_torch, train_pytorch_mask_only
 
 
-DEFAULT_CONFIG_PATH = Path("training/configs/default.json")
+DEFAULT_CONFIG_PATH = Path("configs/ml/default.json")
 
 
 def _default_runtime_config():
     return {
-        "code_name": DEFAULT_CODE_NAME,
+        "code_name": "wifin_r_1_2",
         "dataset": {
             "path_template": "datasets/{code_name}/dataset.csv",
             "first_n_samples": None,
@@ -42,19 +32,13 @@ def _default_runtime_config():
             "test_split": 0.2,
             "hidden1": 32,
             "hidden2": 16,
-            "budget_loss_weight": 0.35,
-            "valid_budgets": [0, 2, 4],
-            "filter_invalid_budget_rows": True,
             "min_positive_count_for_output": 50,
             "max_pos_weight": 8.0,
             "mask_logit_threshold": 0.0,
         },
-        "variants": ["budgeted", "mask_only"],
         "export": {
             "output_dir": "model",
-            "active_variant": "budgeted",
             "write_active_alias": True,
-            "write_legacy_active_name": True,
             "remove_legacy_headers": True,
         },
     }
@@ -85,12 +69,8 @@ def _resolve_dataset_path(cfg, code_name):
     return Path(template.format(code_name=code_name))
 
 
-def _variant_output_paths(output_dir: Path, code_name: str, variant: str):
-    suffix = f"_{variant}" if variant else ""
-    return {
-        "ref": output_dir / f"as_model_{code_name}{suffix}_ref.h",
-        "quantized": output_dir / f"as_model_{code_name}{suffix}_quantized.h",
-    }
+def _legacy_dataset_path(code_name):
+    return Path(f"datasets/{code_name}/dataset.csv")
 
 
 def _canonical_output_paths(output_dir: Path, code_name: str):
@@ -100,12 +80,8 @@ def _canonical_output_paths(output_dir: Path, code_name: str):
     }
 
 
-def _write_active_model_alias(code_name: str, output_dir: Path, active_variant: str, write_legacy_active_name: bool):
-    if write_legacy_active_name:
-        include_name = f"as_model_{code_name}_quantized.h"
-    else:
-        include_name = f"as_model_{code_name}_{active_variant}_quantized.h"
-
+def _write_active_model_alias(code_name: str, output_dir: Path):
+    include_name = f"as_model_{code_name}_quantized.h"
     alias_path = output_dir / "as_model_active_quantized.h"
     with alias_path.open("w", encoding="utf-8") as f:
         f.write("/* Auto-generated active quantized model alias. */\n")
@@ -129,7 +105,7 @@ def _remove_legacy_headers(output_dir: Path):
             print(f"Removed legacy header -> {header}")
 
 
-def _normalize_export_params(params, metadata):
+def _normalize_export_params(params, metadata, training_settings):
     out = {}
     for key, value in params.items():
         if value is None:
@@ -139,14 +115,12 @@ def _normalize_export_params(params, metadata):
         else:
             out[key] = value
 
-    out["variant"] = metadata["variant"]
-    out["valid_budgets"] = metadata.get("valid_budgets", [0, 2, 4])
     out["mask_logit_threshold"] = metadata.get("mask_logit_threshold", 0.0)
     return out
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train ML escape model variants and export C headers.")
+    parser = argparse.ArgumentParser(description="Train ML escape model (mask-only) and export C headers.")
     parser.add_argument(
         "--config",
         type=str,
@@ -164,11 +138,11 @@ def main():
     cfg_path = Path(args.config)
     cfg = _load_json_config(cfg_path)
 
-    code_name = args.code if args.code else cfg.get("code_name", DEFAULT_CODE_NAME)
+    code_name = args.code if args.code else cfg.get("code_name", "wifin_r_1_2")
 
     dataset_file = _resolve_dataset_path(cfg, code_name)
     if not dataset_file.exists():
-        fallback = dataset_path(code_name)
+        fallback = _legacy_dataset_path(code_name)
         if fallback.exists():
             dataset_file = fallback
 
@@ -188,64 +162,35 @@ def main():
     output_dir = Path(cfg["export"]["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    variants = [v.strip() for v in cfg.get("variants", []) if v.strip()]
-    if not variants:
-        print("ERROR: No variants configured. Set variants in JSON config.")
-        raise SystemExit(1)
-
-    active_variant = cfg["export"].get("active_variant", variants[0])
-    if active_variant not in variants:
-        print(f"WARNING: active_variant '{active_variant}' not in variants list. Using '{variants[0]}'.")
-        active_variant = variants[0]
-
     print(f"Using code: {code_name}")
     print(f"Config: {cfg_path}")
     print(f"Dataset: {dataset_file}")
-    print(f"Variants: {variants}")
-
-    if len(X) < MIN_TRAIN_SAMPLES_WARNING:
-        print(f"WARNING: Only {len(X)} samples. Need more data for reliable training.")
-        print("Run simulator with more Monte Carlo iterations or lower SNR.")
+    print("Variant: mask_only")
 
     require_torch()
 
     training_settings = cfg.get("training", {})
 
-    for variant in variants:
-        print(f"\n=== Training variant: {variant} ===\n")
+    print("\n=== Training variant: mask_only ===\n")
+    model, mean, std, output_bits, metadata = train_pytorch_mask_only(
+        X,
+        y,
+        settings=training_settings,
+    )
 
-        model, mean, std, output_bits, metadata = train_pytorch_variant(
-            X,
-            y,
-            variant=variant,
-            settings=training_settings,
-        )
+    raw_params = extract_weights_pytorch(model)
+    params = _normalize_export_params(raw_params, metadata, training_settings)
 
-        raw_params = extract_weights_pytorch(model)
-        params = _normalize_export_params(raw_params, metadata)
+    mean = np.asarray(mean, dtype=np.float64)
+    std = np.asarray(std, dtype=np.float64)
 
-        mean = np.asarray(mean, dtype=np.float64)
-        std = np.asarray(std, dtype=np.float64)
-
-        variant_paths = _variant_output_paths(output_dir, code_name, variant)
-
-        print("--- Exporting variant headers ---")
-        export_ref_header(params, mean, std, output_bits, str(variant_paths["ref"]))
-        export_quantized_header(params, mean, std, output_bits, str(variant_paths["quantized"]))
-
-        if cfg["export"].get("write_legacy_active_name", True) and variant == active_variant:
-            canonical_paths = _canonical_output_paths(output_dir, code_name)
-            print("--- Exporting active canonical headers ---")
-            export_ref_header(params, mean, std, output_bits, str(canonical_paths["ref"]))
-            export_quantized_header(params, mean, std, output_bits, str(canonical_paths["quantized"]))
+    canonical_paths = _canonical_output_paths(output_dir, code_name)
+    print("--- Exporting headers ---")
+    export_ref_header(params, mean, std, output_bits, str(canonical_paths["ref"]))
+    export_quantized_header(params, mean, std, output_bits, str(canonical_paths["quantized"]))
 
     if cfg["export"].get("write_active_alias", True):
-        _write_active_model_alias(
-            code_name,
-            output_dir,
-            active_variant,
-            cfg["export"].get("write_legacy_active_name", True),
-        )
+        _write_active_model_alias(code_name, output_dir)
 
     if cfg["export"].get("remove_legacy_headers", True):
         _remove_legacy_headers(output_dir)
