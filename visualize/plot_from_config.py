@@ -226,7 +226,15 @@ def main() -> None:
         ylabel=axis_labels.get("iter_y", "Average Iterations"),
         metric="iter",
         figure_size=get_figure_size(cfg, "iter", (3.5, 2.7)),
-        **{**shared, "smooth_curves": False, "show_raw_markers": False},
+        **{
+            **shared,
+            "smooth_curves": bool(cfg.get("iter_smooth_curves", True)),
+            "show_raw_markers": bool(cfg.get("iter_show_raw_markers", True)),
+            "fit_mode": str(cfg.get("iter_fit_mode", "poly")).strip().lower(),
+            "poly_degree": int(cfg.get("iter_poly_degree", 2)),
+            "interp_points": int(cfg.get("iter_interp_points", cfg.get("interp_points", 200))),
+            "smooth_window": int(cfg.get("iter_smooth_window", cfg.get("smooth_window", 3))),
+        },
     )
 
     plot_failed_bits_summary(

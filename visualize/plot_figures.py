@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.ticker import AutoMinorLocator, LogLocator, NullFormatter
 
-from plot_curves import poly_log_fit, smooth_log_interp
+from plot_curves import poly_linear_fit, poly_log_fit, smooth_linear_median_interp, smooth_log_interp
 from plot_parse import ResultRow
 from plot_style import filter_positive_fer, metric_values
 
@@ -188,7 +188,7 @@ def plot_metric(
     alpha_x_max_override: float | None = None,
 ) -> None:
     is_log = metric in _LOG_METRICS
-    do_smooth = smooth_curves and is_log
+    do_smooth = smooth_curves and (is_log or metric == "iter")
 
     fig, ax = plt.subplots(figsize=figure_size)
     if figure_facecolor:
@@ -211,12 +211,35 @@ def plot_metric(
         x, y = x[valid], y[valid]
         if len(x) == 0:
             continue
+
+        if metric == "iter":
+            # Keep only a non-increasing sequence (in current alpha order).
+            keep = np.zeros(len(y), dtype=bool)
+            last = None
+            for i, yi in enumerate(y):
+                if last is None or yi <= last:
+                    keep[i] = True
+                    last = yi
+            x, y = x[keep], y[keep]
+            if len(x) == 0:
+                continue
+
         if is_log:
             y = np.clip(y, 1e-15, None)
 
         x_plot, y_plot = x, y
         if do_smooth and len(x) >= 2:
-            if fit_mode == "poly":
+            if metric == "iter":
+                # Iteration trend can use either median-interp or low-degree polynomial fit.
+                if fit_mode == "poly":
+                    x_plot, y_plot = poly_linear_fit(
+                        x, y, degree=poly_degree, n_points=interp_points
+                    )
+                else:
+                    x_plot, y_plot = smooth_linear_median_interp(
+                        x, y, n_points=interp_points, window=smooth_window
+                    )
+            elif fit_mode == "poly":
                 x_plot, y_plot = poly_log_fit(x, y, degree=poly_degree, n_points=interp_points)
             else:
                 x_plot, y_plot = smooth_log_interp(x, y, n_points=interp_points, window=smooth_window)
