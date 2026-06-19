@@ -4,15 +4,11 @@
 #include "common.h"
 
 typedef enum {
-  LABELING_GROUND_TRUTH = 0,
-  LABELING_ROLLOUT = 1,
-  LABELING_CORRECTIVE_MASK = 2
+  LABELING_CORRECTIVE_MASK = 0
 } LabelingStrategyType;
 
 typedef struct {
   LabelingStrategyType type;
-  int rolloutIters;
-  int rolloutTargetFlipCount;
   int convergenceBonus;
 } LabelingConfig;
 

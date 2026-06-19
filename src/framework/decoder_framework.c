@@ -120,8 +120,6 @@ int DecodeFrameWithConfig(
   const DecoderConfig *config,
   DecoderRuntimeStats *runtimeStats,
   FILE *datasetFile,
-  const int *errorIndexes,
-  int errorIndexCount,
   int frameNumber,
   float alpha)
 {
@@ -139,6 +137,9 @@ int DecodeFrameWithConfig(
   /* ---- Fill FrameState from function arguments ---- */
   memset(&fs, 0, sizeof(fs));
 
+  /* Initialize firstStuckIter to -1 to indicate "never stuck" state */
+  fs.firstStuckIter = -1;
+
   fs.base                 = base;
   fs.receivedword         = receivedword;
   fs.codeword             = codeword;
@@ -147,8 +148,6 @@ int DecodeFrameWithConfig(
   fs.config               = config;
   fs.runtimeStats         = runtimeStats;
   fs.datasetFile          = datasetFile;
-  fs.errorIndexes         = errorIndexes;
-  fs.errorIndexCount      = errorIndexCount;
   fs.frameNumber          = frameNumber;
   fs.alpha                = alpha;
 
@@ -201,8 +200,6 @@ int DecodeFrameWithConfig(
   fs.featureConfig.explicitSelection = config->featureSelectionExplicit;
   fs.featureConfig.candidateCount    = fs.selectionConfig.candidateCount;
   fs.labelingConfig.type                   = config->labelingStrategy;
-  fs.labelingConfig.rolloutIters           = config->rolloutIters;
-  fs.labelingConfig.rolloutTargetFlipCount = config->rolloutTargetFlipCount;
   fs.labelingConfig.convergenceBonus       = codeLength;
 
   fs.selectionStrategy = GetCandidateSelectionStrategy(fs.selectionConfig.type);
@@ -218,89 +215,6 @@ int DecodeFrameWithConfig(
   if (maxEnergyBitsBeforeFeedbackSum != NULL)  *maxEnergyBitsBeforeFeedbackSum = 0;
   if (maxEnergyBitsBeforeFeedbackCount != NULL) *maxEnergyBitsBeforeFeedbackCount = 0;
   if (unsuccessfulRoundsToSyndrome0 != NULL)   *unsuccessfulRoundsToSyndrome0 = -1;
-
-  /* ---- Error index tracking setup (optional) ---- */
-  fs.errorIndexLogFile       = NULL;
-  fs.errorIndexCorrectedIter = NULL;
-  if (config->errorIndexesLoggingEnabled &&
-      errorIndexes != NULL && errorIndexCount > 0) {
-    char logFilename[512];
-    int  fileExists = 0;
-    FILE *checkFile;
-    int   ei;
-
-    snprintf(logFilename, sizeof(logFilename), "results/error_index_tracking.csv");
-    checkFile = fopen(logFilename, "r");
-    if (checkFile != NULL) { fileExists = 1; fclose(checkFile); }
-    fs.errorIndexLogFile = fopen(logFilename, "a");
-
-    if (fs.errorIndexLogFile != NULL) {
-      fs.errorIndexCorrectedIter =
-        (int *)calloc((size_t)errorIndexCount, sizeof(int));
-      if (fs.errorIndexCorrectedIter == NULL) {
-        fclose(fs.errorIndexLogFile); fs.errorIndexLogFile = NULL;
-      }
-      for (ei = 0; fs.errorIndexCorrectedIter != NULL && ei < errorIndexCount; ei++)
-        fs.errorIndexCorrectedIter[ei] = -1;
-
-      if (fs.errorIndexLogFile != NULL && !fileExists) {
-        fprintf(fs.errorIndexLogFile, "max_energy,\tframe_id,\titeration");
-        for (ei = 0; ei < errorIndexCount; ei++)
-          fprintf(fs.errorIndexLogFile, ",\tbit_%d_value",          errorIndexes[ei]);
-        for (ei = 0; ei < errorIndexCount; ei++)
-          fprintf(fs.errorIndexLogFile, ",\tbit_%d_energy",         errorIndexes[ei]);
-        for (ei = 0; ei < errorIndexCount; ei++)
-          fprintf(fs.errorIndexLogFile, ",\tbit_%d_target",         errorIndexes[ei]);
-        for (ei = 0; ei < errorIndexCount; ei++)
-          fprintf(fs.errorIndexLogFile, ",\tbit_%d_corrected_iter", errorIndexes[ei]);
-        fprintf(fs.errorIndexLogFile, "\n");
-      }
-
-      if (fs.errorIndexLogFile != NULL) {
-        /* Row 1: transmitted codeword */
-        fprintf(fs.errorIndexLogFile, "-,\t%d,\ttx", frameNumber);
-        for (ei = 0; ei < errorIndexCount; ei++) {
-          int idx = errorIndexes[ei];
-          fprintf(fs.errorIndexLogFile, ",\t%d",
-                  (idx >= 0 && idx < codeLength) ? codeword[idx] : 0);
-        }
-        for (ei = 0; ei < errorIndexCount; ei++)
-          fprintf(fs.errorIndexLogFile, ",\t-");
-        for (ei = 0; ei < errorIndexCount; ei++) {
-          int idx = errorIndexes[ei];
-          fprintf(fs.errorIndexLogFile, ",\t%d",
-                  (idx >= 0 && idx < codeLength) ? codeword[idx] : 0);
-        }
-        for (ei = 0; ei < errorIndexCount; ei++)
-          fprintf(fs.errorIndexLogFile, ",\t0");
-        fprintf(fs.errorIndexLogFile, "\n");
-
-        /* Row 2: received word */
-        fprintf(fs.errorIndexLogFile, "-,\t%d,\trx", frameNumber);
-        for (ei = 0; ei < errorIndexCount; ei++) {
-          int idx = errorIndexes[ei];
-          int rv  = (idx >= 0 && idx < codeLength) ? receivedword[idx] : 0;
-          int tv  = (idx >= 0 && idx < codeLength) ? codeword[idx]     : 0;
-          if (fs.errorIndexCorrectedIter && rv == tv)
-            fs.errorIndexCorrectedIter[ei] = 0;
-          fprintf(fs.errorIndexLogFile, ",\t%d", rv);
-        }
-        for (ei = 0; ei < errorIndexCount; ei++)
-          fprintf(fs.errorIndexLogFile, ",\t-");
-        for (ei = 0; ei < errorIndexCount; ei++) {
-          int idx = errorIndexes[ei];
-          fprintf(fs.errorIndexLogFile, ",\t%d",
-                  (idx >= 0 && idx < codeLength) ? codeword[idx] : 0);
-        }
-        for (ei = 0; ei < errorIndexCount; ei++) {
-          fprintf(fs.errorIndexLogFile, ",\t%d",
-                  fs.errorIndexCorrectedIter
-                    ? fs.errorIndexCorrectedIter[ei] : -1);
-        }
-        fprintf(fs.errorIndexLogFile, "\n");
-      }
-    }
-  }
 
   /* ---- Initialise decoded bits from received word ---- */
   InitDecodedFromReceived(receivedword, decodedBits, codeLength);
@@ -325,43 +239,7 @@ int DecodeFrameWithConfig(
       layerVariableBuffer, shiftedLayerVariableBuffer,
       fs.unsatCounts, fs.satCounts, &fs.syndromeWeight);
 
-    /* -- 2. Error index tracking (optional diagnostics) ----------- */
-    if (fs.errorIndexLogFile != NULL) {
-      int rowMaxEnergy = FindMaxEnergy(bitEnergy, fs.xLength);
-      int ei;
-      fprintf(fs.errorIndexLogFile, "%d,\t%d,\tit%d",
-              rowMaxEnergy, frameNumber, iter);
-      for (ei = 0; ei < errorIndexCount; ei++) {
-        int idx = errorIndexes[ei];
-        if (idx >= 0 && idx < codeLength) {
-          if (fs.errorIndexCorrectedIter &&
-              fs.errorIndexCorrectedIter[ei] == -1 &&
-              decodedBits[idx] == codeword[idx])
-            fs.errorIndexCorrectedIter[ei] = iter;
-          fprintf(fs.errorIndexLogFile, ",\t%d", decodedBits[idx]);
-        } else { fprintf(fs.errorIndexLogFile, ",\t-"); }
-      }
-      for (ei = 0; ei < errorIndexCount; ei++) {
-        int idx = errorIndexes[ei];
-        if (idx >= 0 && idx < codeLength)
-          fprintf(fs.errorIndexLogFile, ",\t%d", bitEnergy[idx]);
-        else fprintf(fs.errorIndexLogFile, ",\t-");
-      }
-      for (ei = 0; ei < errorIndexCount; ei++) {
-        int idx = errorIndexes[ei];
-        if (idx >= 0 && idx < codeLength)
-          fprintf(fs.errorIndexLogFile, ",\t%d", codeword[idx]);
-        else fprintf(fs.errorIndexLogFile, ",\t-");
-      }
-      for (ei = 0; ei < errorIndexCount; ei++) {
-        fprintf(fs.errorIndexLogFile, ",\t%d",
-                fs.errorIndexCorrectedIter
-                  ? fs.errorIndexCorrectedIter[ei] : -1);
-      }
-      fprintf(fs.errorIndexLogFile, "\n");
-    }
-
-    /* -- 3. Convergence check: stop if syndrome is zero ----------- */
+    /* -- 2. Convergence check: stop if syndrome is zero ----------- */
     if (!syndromeFlag) {
       if ((config->decoderType == DECODER_TYPE_FEEDBACK_SHIFT ||
            config->decoderType == DECODER_TYPE_ML_FEEDBACK) &&
@@ -382,7 +260,7 @@ int DecodeFrameWithConfig(
       break;
     }
 
-    /* -- 4. Apply active auxiliary equation energy updates --------- */
+    /* -- 3. Apply active auxiliary equation energy updates --------- */
     if ((config->decoderType == DECODER_TYPE_FEEDBACK_SHIFT ||
          config->decoderType == DECODER_TYPE_ML_FEEDBACK) &&
         fs.auxMaskCount > 0 &&
@@ -406,7 +284,7 @@ int DecodeFrameWithConfig(
                    fs.auxMaskCount, fs.auxRoundsRemaining);
     }
 
-    /* -- 5. Energy tracking and stagnation detection --------------- */
+    /* -- 4. Energy tracking and stagnation detection --------------- */
     fs.maxEnergy = FindMaxEnergy(bitEnergy, fs.xLength);
     fs.maxEnergyBitIdx = 0;
     while (fs.maxEnergyBitIdx < fs.xLength &&
@@ -417,16 +295,16 @@ int DecodeFrameWithConfig(
     fs.isStuck = StagnationStateUpdate(&fs.stagnationState,
                                         &config->stagnation, fs.maxEnergy);
 
-    /* -- 6. Feedback round: propose new parity-check shifts -------- */
+    /* -- 5. Feedback round: propose new parity-check shifts -------- */
     fbr = RunFeedbackRound(&fs);
     if (fbr == FEEDBACK_STOP_FRAME)    break;
     if (fbr == FEEDBACK_CONTINUE_ITER) continue;
 
-    /* -- 7. ML round: candidate-driven bit flips ------------------- */
+    /* -- 6. ML round: candidate-driven bit flips ------------------- */
     mlr = RunMlRound(&fs);
     if (mlr == ML_CONTINUE_ITER) continue;
 
-    /* -- 8. Core perturbation: baseline GDBF flip ------------------ */
+    /* -- 7. Core perturbation: baseline GDBF flip ------------------ */
     FlipAtMaxEnergyTrack(
       decodedBits, bitEnergy, fs.xLength,
       config->decoderType, config->pgdbfFlipProbability,
@@ -481,25 +359,6 @@ int DecodeFrameWithConfig(
   }
 
   FrameStateFree(&fs);
-
-  if (fs.errorIndexLogFile != NULL) {
-    fprintf(fs.errorIndexLogFile, "\n");
-    fclose(fs.errorIndexLogFile);
-  }
-
-  if (config->errorIndexesLoggingEnabled && frameNumber >= 0) {
-    FILE *summaryFile = fopen("results/frame_summary.csv", "a");
-    if (summaryFile != NULL) {
-      fseek(summaryFile, 0, SEEK_END);
-      if (ftell(summaryFile) == 0)
-        fprintf(summaryFile, "frame_id,alpha,status,iterations,bit_errors\n");
-      fprintf(summaryFile, "%d,%.5f,%s,%d,%d\n",
-              frameNumber, alpha,
-              (*isCodeword) ? "success" : "trapped",
-              *usedIterations, *frameBitErrors);
-      fclose(summaryFile);
-    }
-  }
 
   return 0;
 }

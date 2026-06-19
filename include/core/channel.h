@@ -10,20 +10,5 @@ void AddBscNoiseSplit(
     int m,
     float alpha);
 
-void AddBscNoiseFromIndexes(
-    const int *codeword,
-    int *receivedword,
-    int length,
-    const int *errorIndexes,
-    int numErrors);
-
-void AddBscNoiseFromIndexesSplit(
-    const int *codeword,
-    int *receivedword,
-    int n,
-    int m,
-    const int *errorIndexes,
-    int numErrors);
-
     
 #endif

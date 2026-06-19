@@ -30,6 +30,23 @@ static void TrimRight(char *s)
   }
 }
 
+static void SkipBOM(FILE *f)
+{
+  /* Skip UTF-8 BOM if present (0xEF, 0xBB, 0xBF) */
+  unsigned char byte1, byte2, byte3;
+  long pos = ftell(f);
+  if (fread(&byte1, 1, 1, f) == 1 &&
+      fread(&byte2, 1, 1, f) == 1 &&
+      fread(&byte3, 1, 1, f) == 1) {
+    if (byte1 == 0xEF && byte2 == 0xBB && byte3 == 0xBF) {
+      /* BOM detected, position is already after it */
+      return;
+    }
+  }
+  /* No BOM, reset to start */
+  fseek(f, pos, SEEK_SET);
+}
+
 static int ParseBoolean(const char *v, int fallback)
 {
   if (StrEq(v, "1") || StrEq(v, "true") || StrEq(v, "yes") || StrEq(v, "on")) return 1;
@@ -91,23 +108,15 @@ void DecoderConfigInitDefaults(DecoderConfig *config)
     return;
   }
 
-#if AS_ML_MODE
-  config->decoderType = DECODER_TYPE_ML;
-#elif PGDBF
-  config->decoderType = DECODER_TYPE_PGDBF;
-#else
   config->decoderType = DECODER_TYPE_GDBF;
-#endif
 
   config->enableDatasetCollection = 0;
-  config->labelingStrategy = LABELING_GROUND_TRUTH;
+  config->labelingStrategy = LABELING_CORRECTIVE_MASK;
 
-  config->candidateSelection = CANDIDATE_SELECTION_TOPK;
+  config->candidateSelection = CANDIDATE_SELECTION_MAX_ENERGY_CHECKS;
   config->candidateCount = 19;
   config->featureFlags = 0;
   config->featureSelectionExplicit = 0;
-  config->rolloutIters = 3;
-  config->rolloutTargetFlipCount = 0;
   config->pgdbfFlipProbability = 0.7;
   config->allowedWorsening = 4;
   config->feedbackTriggerIter = 15;
@@ -123,15 +132,18 @@ void DecoderConfigInitDefaults(DecoderConfig *config)
   config->feedbackRowSelectionMode = 0;  /* 0 = max severity, 1 = min non-zero severity */
   config->feedbackShiftSourceMode = 0;   /* 0 = fixed (default), 1 = random, 2 = fixed-number */
   config->feedbackShiftFixedDelta = 1;
+  config->feedbackContinueFromCurrent = 1;
   config->mlInvokeOnlyIfBaselineFails = 1;
   config->mlPeriodicInterval = 0;
+  config->mlSingleTriggerIter = 0;
+  config->mlStagnationPeriodicInterval = 0;
+  config->mlOscillationPeriodicInterval = 0;
+  config->mlMaxEnergySeedMode = 0;
 
   config->stagnation.energyHistoryLen = 8;
   config->stagnation.stagnationTrigger = 2;
   config->stagnation.oscillationTrigger = 5;
-  config->errorIndexesLoggingEnabled = 0;
   config->quantumOnlySyndrome = 0;
-  config->errorIndexesPath[0] = '\0';
 }
 
 int DecoderConfigLoadFromFile(DecoderConfig *config, const char *filePath)
@@ -147,6 +159,8 @@ int DecoderConfigLoadFromFile(DecoderConfig *config, const char *filePath)
   if (f == NULL) {
     return 1;
   }
+
+  SkipBOM(f);
 
   while (fgets(line, sizeof(line), f) != NULL) {
     char *p = TrimLeft(line);
@@ -177,13 +191,14 @@ int DecoderConfigLoadFromFile(DecoderConfig *config, const char *filePath)
       else if (StrEq(v, "feedback_shift")) config->decoderType = DECODER_TYPE_FEEDBACK_SHIFT;
       else if (StrEq(v, "ml_feedback")) config->decoderType = DECODER_TYPE_ML_FEEDBACK;
     } else if (StrEq(k, "candidate_selection")) {
-      if (StrEq(v, "topk")) config->candidateSelection = CANDIDATE_SELECTION_TOPK;
-      else if (StrEq(v, "graph")) config->candidateSelection = CANDIDATE_SELECTION_GRAPH;
-      else if (StrEq(v, "max_energy_checks")) config->candidateSelection = CANDIDATE_SELECTION_MAX_ENERGY_CHECKS;
+      if (StrEq(v, "max_energy_checks")) {
+        config->candidateSelection = CANDIDATE_SELECTION_MAX_ENERGY_CHECKS;
+      } else {
+        /* Single supported strategy: keep canonical max_energy_checks. */
+        config->candidateSelection = CANDIDATE_SELECTION_MAX_ENERGY_CHECKS;
+      }
     } else if (StrEq(k, "labeling_strategy")) {
-      if (StrEq(v, "ground_truth")) config->labelingStrategy = LABELING_GROUND_TRUTH;
-      else if (StrEq(v, "rollout")) config->labelingStrategy = LABELING_ROLLOUT;
-      else if (StrEq(v, "corrective_mask")) config->labelingStrategy = LABELING_CORRECTIVE_MASK;
+      if (StrEq(v, "corrective_mask")) config->labelingStrategy = LABELING_CORRECTIVE_MASK;
     } else if (StrEq(k, "feature_set")) {
       if (StrEq(v, "basic")) config->featureFlags = 0;
       else if (StrEq(v, "basic_plus_impact")) config->featureFlags = FEATURE_FLAG_FLIP_IMPACT;
@@ -195,10 +210,6 @@ int DecoderConfigLoadFromFile(DecoderConfig *config, const char *filePath)
       config->candidateCount = atoi(v);
     } else if (StrEq(k, "collect")) {
       config->enableDatasetCollection = ParseBoolean(v, config->enableDatasetCollection);
-    } else if (StrEq(k, "rollout_iters")) {
-      config->rolloutIters = atoi(v);
-    } else if (StrEq(k, "rollout_target_flip_count")) {
-      config->rolloutTargetFlipCount = atoi(v);
     } else if (StrEq(k, "pgdbf_flip_probability")) {
       config->pgdbfFlipProbability = atof(v);
     } else if (StrEq(k, "allowed_worsening")) {
@@ -234,21 +245,33 @@ int DecoderConfigLoadFromFile(DecoderConfig *config, const char *filePath)
       else config->feedbackShiftSourceMode = 0;  /* default: fixed */
     } else if (StrEq(k, "feedback_shift_fixed_delta")) {
       config->feedbackShiftFixedDelta = atoi(v);
+    } else if (StrEq(k, "feedback_continue_from_current")) {
+      config->feedbackContinueFromCurrent = ParseBoolean(v, config->feedbackContinueFromCurrent);
     } else if (StrEq(k, "ml_invoke_only_if_baseline_fails")) {
       config->mlInvokeOnlyIfBaselineFails = ParseBoolean(v, config->mlInvokeOnlyIfBaselineFails);
+    } else if (StrEq(k, "ml_trigger_mode")) {
+      if (StrEq(v, "periodic")) config->mlTriggerMode = ML_TRIGGER_PERIODIC;
+      else if (StrEq(v, "state_based")) config->mlTriggerMode = ML_TRIGGER_STATE_BASED;
+      else config->mlTriggerMode = ML_TRIGGER_NONE;
     } else if (StrEq(k, "ml_periodic_interval")) {
       config->mlPeriodicInterval = atoi(v);
+    } else if (StrEq(k, "ml_single_trigger_iter")) {
+      config->mlSingleTriggerIter = atoi(v);
+    } else if (StrEq(k, "ml_stagnation_periodic_interval")) {
+      config->mlStagnationPeriodicInterval = atoi(v);
+    } else if (StrEq(k, "ml_oscillation_periodic_interval")) {
+      config->mlOscillationPeriodicInterval = atoi(v);
+    } else if (StrEq(k, "ml_start_after_stuck")) {
+      config->mlStartAfterStuck = ParseBoolean(v, config->mlStartAfterStuck);
+    } else if (StrEq(k, "ml_max_energy_seed_mode")) {
+      if (StrEq(v, "all")) config->mlMaxEnergySeedMode = 1;
+      else config->mlMaxEnergySeedMode = 0;
     } else if (StrEq(k, "energy_hist_len")) {
       config->stagnation.energyHistoryLen = atoi(v);
     } else if (StrEq(k, "stagnation_trigger")) {
       config->stagnation.stagnationTrigger = atoi(v);
     } else if (StrEq(k, "oscillation_trigger")) {
       config->stagnation.oscillationTrigger = atoi(v);
-    } else if (StrEq(k, "error_indexes_path")) {
-      strncpy(config->errorIndexesPath, v, sizeof(config->errorIndexesPath) - 1);
-      config->errorIndexesPath[sizeof(config->errorIndexesPath) - 1] = '\0';
-    } else if (StrEq(k, "error_indexes_logging_enabled")) {
-      config->errorIndexesLoggingEnabled = ParseBoolean(v, config->errorIndexesLoggingEnabled);
     } else if (StrEq(k, "quantum_only_syndrome")) {
       config->quantumOnlySyndrome = ParseBoolean(v, config->quantumOnlySyndrome);
     }
@@ -257,8 +280,6 @@ int DecoderConfigLoadFromFile(DecoderConfig *config, const char *filePath)
   fclose(f);
 
   if (config->candidateCount < 1) config->candidateCount = 1;
-  if (config->rolloutIters < 1) config->rolloutIters = 1;
-  if (config->rolloutTargetFlipCount < 0) config->rolloutTargetFlipCount = 0;
   if (config->feedbackMaskWindowIters < 1) config->feedbackMaskWindowIters = 1;
   if (config->feedbackDeltaMax < 1) config->feedbackDeltaMax = 1;
   if (config->feedbackDeltaMax > 64) config->feedbackDeltaMax = 64;
@@ -273,7 +294,13 @@ int DecoderConfigLoadFromFile(DecoderConfig *config, const char *filePath)
   if (config->feedbackShiftSourceMode > 2) config->feedbackShiftSourceMode = 2;
   if (config->feedbackShiftFixedDelta < 1) config->feedbackShiftFixedDelta = 1;
   if (config->feedbackShiftFixedDelta > 64) config->feedbackShiftFixedDelta = 64;
+  if (config->feedbackContinueFromCurrent != 0) config->feedbackContinueFromCurrent = 1;
   if (config->mlPeriodicInterval < 0) config->mlPeriodicInterval = 0;
+  if (config->mlSingleTriggerIter < 0) config->mlSingleTriggerIter = 0;
+  if (config->mlStagnationPeriodicInterval < 0) config->mlStagnationPeriodicInterval = 0;
+  if (config->mlOscillationPeriodicInterval < 0) config->mlOscillationPeriodicInterval = 0;
+  if (config->mlMaxEnergySeedMode < 0) config->mlMaxEnergySeedMode = 0;
+  if (config->mlMaxEnergySeedMode > 1) config->mlMaxEnergySeedMode = 1;
   if (config->stagnation.energyHistoryLen < 2) config->stagnation.energyHistoryLen = 2;
   if (config->pgdbfFlipProbability < 0.0) config->pgdbfFlipProbability = 0.0;
   if (config->pgdbfFlipProbability > 1.0) config->pgdbfFlipProbability = 1.0;
@@ -305,12 +332,10 @@ void DecoderConfigApplyEnv(DecoderConfig *config)
   if (StrEq(decoderType, "feedback_shift")) config->decoderType = DECODER_TYPE_FEEDBACK_SHIFT;
   if (StrEq(decoderType, "ml_feedback")) config->decoderType = DECODER_TYPE_ML_FEEDBACK;
 
-  if (StrEq(candidateSelection, "topk")) config->candidateSelection = CANDIDATE_SELECTION_TOPK;
-  if (StrEq(candidateSelection, "graph")) config->candidateSelection = CANDIDATE_SELECTION_GRAPH;
-  if (StrEq(candidateSelection, "max_energy_checks")) config->candidateSelection = CANDIDATE_SELECTION_MAX_ENERGY_CHECKS;
+  if (candidateSelection != NULL && *candidateSelection != '\0') {
+    config->candidateSelection = CANDIDATE_SELECTION_MAX_ENERGY_CHECKS;
+  }
 
-  if (StrEq(labeling, "ground_truth")) config->labelingStrategy = LABELING_GROUND_TRUTH;
-  if (StrEq(labeling, "rollout")) config->labelingStrategy = LABELING_ROLLOUT;
   if (StrEq(labeling, "corrective_mask")) config->labelingStrategy = LABELING_CORRECTIVE_MASK;
 
   if (StrEq(featureSet, "basic")) {
@@ -328,8 +353,6 @@ void DecoderConfigApplyEnv(DecoderConfig *config)
 
   config->candidateCount = ReadEnvInt("GDBF_CANDIDATE_K", config->candidateCount);
   config->enableDatasetCollection = ReadEnvInt("GDBF_COLLECT", config->enableDatasetCollection);
-  config->rolloutIters = ReadEnvInt("GDBF_ROLLOUT_ITERS", config->rolloutIters);
-  config->rolloutTargetFlipCount = ReadEnvInt("GDBF_ROLLOUT_TARGET_FLIP_COUNT", config->rolloutTargetFlipCount);
   config->allowedWorsening = ReadEnvInt("GDBF_ALLOWED_WORSENING", config->allowedWorsening);
   config->feedbackTriggerIter = ReadEnvInt("GDBF_FEEDBACK_TRIGGER_ITER", config->feedbackTriggerIter);
   config->feedbackMaskWindowIters = ReadEnvInt("GDBF_FEEDBACK_MASK_WINDOW_ITERS", config->feedbackMaskWindowIters);
@@ -343,6 +366,7 @@ void DecoderConfigApplyEnv(DecoderConfig *config)
   config->feedbackLogsEnabled = ReadEnvInt("GDBF_FEEDBACK_LOGS", config->feedbackLogsEnabled);
   config->feedbackRowSelectionMode = ReadEnvInt("GDBF_FEEDBACK_ROW_SELECTION_MODE", config->feedbackRowSelectionMode);
   config->feedbackShiftFixedDelta = ReadEnvInt("GDBF_FEEDBACK_SHIFT_FIXED_DELTA", config->feedbackShiftFixedDelta);
+  config->feedbackContinueFromCurrent = ReadEnvInt("GDBF_FEEDBACK_CONTINUE_FROM_CURRENT", config->feedbackContinueFromCurrent);
   {
     const char *shiftSourceMode = getenv("GDBF_FEEDBACK_SHIFT_SOURCE_MODE");
     if (StrEq(shiftSourceMode, "random")) config->feedbackShiftSourceMode = 1;
@@ -355,6 +379,15 @@ void DecoderConfigApplyEnv(DecoderConfig *config)
   config->pgdbfFlipProbability = ReadEnvDouble("GDBF_PGDBF_P", config->pgdbfFlipProbability);
   config->mlInvokeOnlyIfBaselineFails = ReadEnvInt("GDBF_ML_INVOKE_ONLY_IF_BASELINE_FAILS", config->mlInvokeOnlyIfBaselineFails);
   config->mlPeriodicInterval = ReadEnvInt("GDBF_ML_PERIODIC_INTERVAL", config->mlPeriodicInterval);
+  config->mlSingleTriggerIter = ReadEnvInt("GDBF_ML_SINGLE_TRIGGER_ITER", config->mlSingleTriggerIter);
+  config->mlStagnationPeriodicInterval = ReadEnvInt("GDBF_ML_STAGNATION_PERIODIC_INTERVAL", config->mlStagnationPeriodicInterval);
+  config->mlOscillationPeriodicInterval = ReadEnvInt("GDBF_ML_OSCILLATION_PERIODIC_INTERVAL", config->mlOscillationPeriodicInterval);
+  {
+    const char *mlMaxSeedMode = getenv("GDBF_ML_MAX_ENERGY_SEED_MODE");
+    if (StrEq(mlMaxSeedMode, "all")) config->mlMaxEnergySeedMode = 1;
+    else if (StrEq(mlMaxSeedMode, "single")) config->mlMaxEnergySeedMode = 0;
+    else config->mlMaxEnergySeedMode = ReadEnvInt("GDBF_ML_MAX_ENERGY_SEED_MODE", config->mlMaxEnergySeedMode);
+  }
 
   config->stagnation.energyHistoryLen = ReadEnvInt("GDBF_ENERGY_HIST_LEN", config->stagnation.energyHistoryLen);
   config->stagnation.stagnationTrigger = ReadEnvInt("GDBF_STAGNATION_TRIGGER", config->stagnation.stagnationTrigger);
@@ -362,12 +395,6 @@ void DecoderConfigApplyEnv(DecoderConfig *config)
 
   if (config->candidateCount < 1) {
     config->candidateCount = 1;
-  }
-  if (config->rolloutIters < 1) {
-    config->rolloutIters = 1;
-  }
-  if (config->rolloutTargetFlipCount < 0) {
-    config->rolloutTargetFlipCount = 0;
   }
   if (config->feedbackTriggerIter < 1) {
     config->feedbackTriggerIter = 1;
@@ -414,8 +441,26 @@ void DecoderConfigApplyEnv(DecoderConfig *config)
   if (config->feedbackShiftFixedDelta > 64) {
     config->feedbackShiftFixedDelta = 64;
   }
+  if (config->feedbackContinueFromCurrent != 0) {
+    config->feedbackContinueFromCurrent = 1;
+  }
   if (config->mlPeriodicInterval < 0) {
     config->mlPeriodicInterval = 0;
+  }
+  if (config->mlSingleTriggerIter < 0) {
+    config->mlSingleTriggerIter = 0;
+  }
+  if (config->mlStagnationPeriodicInterval < 0) {
+    config->mlStagnationPeriodicInterval = 0;
+  }
+  if (config->mlOscillationPeriodicInterval < 0) {
+    config->mlOscillationPeriodicInterval = 0;
+  }
+  if (config->mlMaxEnergySeedMode < 0) {
+    config->mlMaxEnergySeedMode = 0;
+  }
+  if (config->mlMaxEnergySeedMode > 1) {
+    config->mlMaxEnergySeedMode = 1;
   }
   if (config->stagnation.energyHistoryLen < 2) {
     config->stagnation.energyHistoryLen = 2;

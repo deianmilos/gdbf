@@ -67,8 +67,6 @@ int DecodeFrameGdbf(
     &config,
     &stats,
     datasetFile,
-    NULL,
-    0,
     -1,
     0.0f);
 

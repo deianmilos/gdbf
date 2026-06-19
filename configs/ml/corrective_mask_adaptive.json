@@ -1,0 +1,31 @@
+{
+  "code_name": "IRISC_P_dv3_R050_L54_N1296",
+  "dataset": {
+    "path_template": "datasets/{code_name}/best_dataset.csv",
+    "first_n_samples": 30000,
+    "subset": {
+      "exclude_anchor_candidate": true,
+      "anchor_candidate_index": 0,
+      "candidate_indices": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      "feature_names": ["energy", "flip_impact", "flip_count"],
+      "label_encoding": "mask"
+    }
+  },
+  "training": {
+    "batch_size": 32,
+    "epochs": 500,
+    "learning_rate": 0.001,
+    "test_split": 0.2,
+    "hidden1": 32,
+    "hidden2": 16,
+    "min_positive_count_for_output": 10,
+    "max_pos_weight": 4.0,
+    "positive_class_weight_boost": 2.0,
+    "mask_logit_threshold": 0.0
+  },
+  "export": {
+    "output_dir": "model",
+    "write_active_alias": true,
+    "remove_legacy_headers": true
+  }
+}

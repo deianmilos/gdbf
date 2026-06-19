@@ -1,6 +1,6 @@
 #include "candidate_selection.h"
 
-static void SelectTopK(
+static void FillTopByEnergy(
   const BaseMatrixData *base,
   const int *decodedBits,
   const int *bitEnergy,
@@ -127,44 +127,18 @@ static void SortByEnergyThenUnsat(const int *bitEnergy, const int *unsatCounts, 
   }
 }
 
-static void SelectGraph(
-  const BaseMatrixData *base,
-  const int *decodedBits,
+int CollectMaxEnergySeedIndices(
   const int *bitEnergy,
-  const int *unsatCounts,
   int xLength,
-  const CandidateSelectionConfig *config,
-  int *candidateIdx,
-  int *candidateCountOut)
+  int *seedIdxOut,
+  int maxSeedCount)
 {
   int i;
   int maxEnergy = -2147483647;
-  int *seeds;
   int seedCount = 0;
-  int *pool;
-  int poolCount = 0;
-  int *seen;
-  int K;
-  (void)decodedBits;
 
-  if (candidateIdx == NULL || candidateCountOut == NULL || bitEnergy == NULL ||
-      unsatCounts == NULL || base == NULL || config == NULL) {
-    return;
-  }
-
-  K = config->candidateCount;
-  if (K > xLength) K = xLength;
-  if (K < 0) K = 0;
-
-  seeds = (int *)malloc((size_t)xLength * sizeof(int));
-  pool = (int *)malloc((size_t)xLength * sizeof(int));
-  seen = (int *)calloc((size_t)xLength, sizeof(int));
-  if (seeds == NULL || pool == NULL || seen == NULL) {
-    free(seeds);
-    free(pool);
-    free(seen);
-    SelectTopK(base, decodedBits, bitEnergy, unsatCounts, xLength, config, candidateIdx, candidateCountOut);
-    return;
+  if (bitEnergy == NULL || seedIdxOut == NULL || xLength <= 0 || maxSeedCount <= 0) {
+    return 0;
   }
 
   for (i = 0; i < xLength; i++) {
@@ -173,110 +147,64 @@ static void SelectGraph(
     }
   }
 
-  for (i = 0; i < xLength; i++) {
+  for (i = 0; i < xLength && seedCount < maxSeedCount; i++) {
     if (bitEnergy[i] == maxEnergy) {
-      seeds[seedCount++] = i;
+      seedIdxOut[seedCount++] = i;
     }
   }
 
-  for (i = 0; i < seedCount; i++) {
-    InsertIfNew(seeds[i], pool, &poolCount, xLength, seen);
-    ExpandSeedNeighborhood(base, seeds[i], xLength, pool, &poolCount, seen);
-  }
-
-  if (poolCount == 0) {
-    SelectTopK(base, decodedBits, bitEnergy, unsatCounts, xLength, config, candidateIdx, candidateCountOut);
-    free(seeds);
-    free(pool);
-    free(seen);
-    return;
-  }
-
-  SortByEnergyThenUnsat(bitEnergy, unsatCounts, pool, poolCount);
-
-  for (i = 0; i < K && i < poolCount; i++) {
-    candidateIdx[i] = pool[i];
-  }
-  *candidateCountOut = (K < poolCount) ? K : poolCount;
-
-  free(seeds);
-  free(pool);
-  free(seen);
+  return seedCount;
 }
 
-static const CandidateSelectionStrategy kTopKStrategy = {
-  "topk",
-  SelectTopK
-};
-
-static const CandidateSelectionStrategy kGraphStrategy = {
-  "graph",
-  SelectGraph
-};
-
-static void SelectMaxEnergyChecks(
+int BuildMaxEnergyChecksCandidatesForSeed(
   const BaseMatrixData *base,
-  const int *decodedBits,
   const int *bitEnergy,
   const int *unsatCounts,
   int xLength,
   const CandidateSelectionConfig *config,
-  int *candidateIdx,
-  int *candidateCountOut)
+  int seedIdx,
+  int *candidateIdx)
 {
   int i;
   int j;
   int K;
-  int maxEnergy = -2147483647;
-  int seedIdx = 0;
   int *pool;
   int poolCount = 0;
   int *seen;
-  (void)decodedBits;
-  (void)unsatCounts;
 
-  if (candidateIdx == NULL || candidateCountOut == NULL || bitEnergy == NULL ||
-      base == NULL || config == NULL) {
-    return;
+  if (candidateIdx == NULL || bitEnergy == NULL || unsatCounts == NULL ||
+      base == NULL || config == NULL || xLength <= 0) {
+    return 0;
   }
 
   K = config->candidateCount;
   if (K > xLength) K = xLength;
   if (K < 0) K = 0;
+  if (K == 0) {
+    return 0;
+  }
 
   pool = (int *)malloc((size_t)xLength * sizeof(int));
   seen = (int *)calloc((size_t)xLength, sizeof(int));
   if (pool == NULL || seen == NULL) {
     free(pool);
     free(seen);
-    SelectGraph(base, decodedBits, bitEnergy, unsatCounts, xLength, config, candidateIdx, candidateCountOut);
-    return;
+    return 0;
   }
 
-  for (i = 0; i < xLength; i++) {
-    if (bitEnergy[i] > maxEnergy) {
-      maxEnergy = bitEnergy[i];
-      seedIdx = i;
-    }
-  }
-
-  /* Use one max-energy bit as anchor, then collect VN neighborhood from its checks. */
   InsertIfNew(seedIdx, pool, &poolCount, xLength, seen);
   ExpandSeedNeighborhood(base, seedIdx, xLength, pool, &poolCount, seen);
 
   if (poolCount == 0) {
-    SelectTopK(base, decodedBits, bitEnergy, unsatCounts, xLength, config, candidateIdx, candidateCountOut);
     free(pool);
     free(seen);
-    return;
+    return 0;
   }
 
-  /* Keep anchor bit in slot 0 and sort the remaining neighborhood by energy/unsat. */
   if (poolCount > 1) {
     SortByEnergyThenUnsat(bitEnergy, unsatCounts, pool + 1, poolCount - 1);
   }
 
-  /* Guarantee fixed-width candidate set when caller requests K bits. */
   if (poolCount < K) {
     for (i = 0; i < xLength && poolCount < K; i++) {
       int best = -1;
@@ -299,10 +227,49 @@ static void SelectMaxEnergyChecks(
   for (i = 0; i < K && i < poolCount; i++) {
     candidateIdx[i] = pool[i];
   }
-  *candidateCountOut = (K < poolCount) ? K : poolCount;
 
   free(pool);
   free(seen);
+  return (K < poolCount) ? K : poolCount;
+}
+
+static void SelectMaxEnergyChecks(
+  const BaseMatrixData *base,
+  const int *decodedBits,
+  const int *bitEnergy,
+  const int *unsatCounts,
+  int xLength,
+  const CandidateSelectionConfig *config,
+  int *candidateIdx,
+  int *candidateCountOut)
+{
+  int i;
+  int maxEnergy = -2147483647;
+  int seedIdx = 0;
+  int selectedCount;
+  (void)decodedBits;
+
+  if (candidateIdx == NULL || candidateCountOut == NULL || bitEnergy == NULL ||
+      unsatCounts == NULL || base == NULL || config == NULL) {
+    return;
+  }
+
+  for (i = 0; i < xLength; i++) {
+    if (bitEnergy[i] > maxEnergy) {
+      maxEnergy = bitEnergy[i];
+      seedIdx = i;
+    }
+  }
+
+  selectedCount = BuildMaxEnergyChecksCandidatesForSeed(
+    base, bitEnergy, unsatCounts, xLength, config, seedIdx, candidateIdx);
+
+  if (selectedCount <= 0) {
+    FillTopByEnergy(base, decodedBits, bitEnergy, unsatCounts, xLength, config, candidateIdx, candidateCountOut);
+    return;
+  }
+
+  *candidateCountOut = selectedCount;
 }
 
 static const CandidateSelectionStrategy kMaxEnergyChecksStrategy = {
@@ -312,13 +279,6 @@ static const CandidateSelectionStrategy kMaxEnergyChecksStrategy = {
 
 const CandidateSelectionStrategy *GetCandidateSelectionStrategy(CandidateSelectionType type)
 {
-  switch (type) {
-    case CANDIDATE_SELECTION_MAX_ENERGY_CHECKS:
-      return &kMaxEnergyChecksStrategy;
-    case CANDIDATE_SELECTION_GRAPH:
-      return &kGraphStrategy;
-    case CANDIDATE_SELECTION_TOPK:
-    default:
-      return &kTopKStrategy;
-  }
+  (void)type;
+  return &kMaxEnergyChecksStrategy;
 }

@@ -7,34 +7,11 @@ CFLAGS  = -Iinclude \
           -Iinclude/framework \
           -Iinclude/config \
           -Iinclude/stats \
-          -O2 -lm
-SRCS    = src/app/main.c \
-          src/core/matrix_io.c \
-          src/core/encoding.c \
-          src/core/channel.c \
-          src/core/decoder.c \
-          src/core/stagnation_detection.c \
-          src/feedback/decoder_feedback_shift.c \
-          src/feedback/decoder_receiver.c \
-          src/ml/decoder_ml.c \
-          src/ml/decoder_perturb.c \
-          src/ml/candidate_selection.c \
-          src/ml/feature_extractor.c \
-          src/ml/labeling_strategy.c \
-          src/config/decoder_config.c \
-          src/stats/stats.c \
-          src/framework/decoder_framework.c
-CFLAGS  = -Iinclude \
-          -Iinclude/common \
-          -Iinclude/core \
-          -Iinclude/feedback \
-          -Iinclude/ml \
-          -Iinclude/framework \
-          -Iinclude/config \
-          -Iinclude/stats \
-          -O2 -lm -Wno-unused-variable
+          -O2 -Wno-unused-variable -lm
 
 SRCS    = src/app/main.c \
+          src/app/args_and_config.c \
+          src/app/logging.c \
           src/core/matrix_io.c \
           src/core/encoding.c \
           src/core/channel.c \
@@ -48,6 +25,7 @@ SRCS    = src/app/main.c \
           src/ml/candidate_selection.c \
           src/ml/feature_extractor.c \
           src/ml/labeling_strategy.c \
+          src/ml/dataset_writer.c \
           src/ml/ml_round.c \
           src/config/decoder_config.c \
           src/stats/stats.c \
@@ -82,3 +60,14 @@ AS_ENUM: $(ASRCS)
 
 clean:
 	del /Q GDBF.exe GDBF_COLLECT.exe GDBF_TRAIN.exe GDBF_ML.exe AS_ENUM.exe 2>NUL || true
+
+# ============================================================================
+# ML Training (Python: requires conda environment gdbf-ml)
+# ============================================================================
+# Train and export quantized + float reference model headers:
+#   conda run -n gdbf-ml python training/train.py --config configs/ml/default.json
+# or:
+#   conda activate gdbf-ml && python training/train.py --config configs/ml/default.json
+#
+# Generated headers are placed in model/, include active alias as_model_active_quantized.h
+# After training, rebuild GDBF with: make clean && make

@@ -1,0 +1,24 @@
+{
+  "code_name": "wifin_r_1_2",
+  "dataset": {
+    "path_template": "datasets/{code_name}/dataset.csv",
+    "first_n_samples": null
+  },
+  "training": {
+    "batch_size": 32,
+    "epochs": 500,
+    "learning_rate": 0.001,
+    "test_split": 0.2,
+    "hidden1": 32,
+    "hidden2": 16,
+    "min_positive_count_for_output": 50,
+    "max_pos_weight": 8.0,
+    "positive_class_weight_boost": 1.0,
+    "mask_logit_threshold": 0.0
+  },
+  "export": {
+    "output_dir": "model",
+    "write_active_alias": true,
+    "remove_legacy_headers": true
+  }
+}
