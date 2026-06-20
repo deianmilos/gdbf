@@ -1,0 +1,4 @@
+trigger,tested,baseline_clean,stuck_frames,recovered_after_ml,not_recovered_after_ml,baseline_clean_rate_pct,stuck_rate_pct,ml_recovery_given_stuck_pct,ml_failure_given_stuck_pct,ml_contribution_to_total_clean_pct
+2it,15627682,15620901,6781,4146,2635,99.9566,0.0434,61.1414,38.8586,0.0265
+3it,6124219,6097305,26914,24514,2400,99.5605,0.4395,91.0827,8.9173,0.4004
+4it,10625925,10607154,18771,16271,2500,99.8233,0.1767,86.6816,13.3184,0.1532
