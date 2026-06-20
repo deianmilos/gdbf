@@ -244,9 +244,26 @@ if (Test-Path .\GDBF.exe) { Remove-Item .\GDBF.exe }
 gcc -Iinclude -Iinclude/common -Iinclude/core -Iinclude/feedback -Iinclude/ml -Iinclude/framework -Iinclude/config -Iinclude/stats -O2 -Wno-unused-variable -o GDBF src/app/main.c src/app/args_and_config.c src/app/logging.c src/core/matrix_io.c src/core/encoding.c src/core/channel.c src/core/decoder.c src/core/stagnation_detection.c src/feedback/decoder_feedback_shift.c src/feedback/decoder_receiver.c src/feedback/feedback_round.c src/ml/decoder_ml.c src/ml/decoder_perturb.c src/ml/candidate_selection.c src/ml/feature_extractor.c src/ml/labeling_strategy.c src/ml/dataset_writer.c src/ml/ml_round.c src/config/decoder_config.c src/stats/stats.c src/framework/frame_setup.c src/framework/decoder_framework.c -lm
 ```
 
-## 11) Plot FER Comparison
+## 11) Plot Current IRISC Comparison (Baseline + ML 2/3/4 it)
 
-Example baseline vs ML plot:
+Use the current config-driven plotting workflow:
+
+```powershell
+python visualize/plot_from_config.py --config visualize/plot_config_irisc_ml_latest_2_3_4_vs_baseline.json
+```
+
+This generates the latest figures under:
+
+- `visualize/plots/irisc_ml_latest_2_3_4_vs_baseline/`
+
+Main outputs include:
+
+- `fer_comparison_latest.png`
+- `fer_ber_combined_latest.png`
+- `iteration_comparison_latest.png`
+- `failed_bits_histogram_latest.png`
+
+Optional legacy quick plot (single baseline vs single ML result):
 
 ```powershell
 python visualize/plot_results.py --baseline results/wifin_r_1_2/baseline/simulation.res --ml results/wifin_r_1_2/ml/simulation.res --output visualize/plots/wifin_r_1_2/fer_comparison.png --title "FER Comparison: Baseline vs ML"
@@ -270,7 +287,10 @@ python visualize/plot_results.py --baseline results/wifin_r_1_2/baseline/simulat
    gcc -Iinclude -Iinclude/common -Iinclude/core -Iinclude/feedback -Iinclude/ml -Iinclude/framework -Iinclude/config -Iinclude/stats -O2 -Wno-unused-variable -o GDBF src/app/main.c src/app/args_and_config.c src/app/logging.c src/core/matrix_io.c src/core/encoding.c src/core/channel.c src/core/decoder.c src/core/stagnation_detection.c src/feedback/decoder_feedback_shift.c src/feedback/decoder_receiver.c src/feedback/feedback_round.c src/ml/decoder_ml.c src/ml/decoder_perturb.c src/ml/candidate_selection.c src/ml/feature_extractor.c src/ml/labeling_strategy.c src/ml/dataset_writer.c src/ml/ml_round.c src/config/decoder_config.c src/stats/stats.c src/framework/frame_setup.c src/framework/decoder_framework.c -lm
    ```
 6. Run ML mode with `configs/decoder/best_ml_escape.cfg`.
-7. Plot baseline vs ML with `visualize/plot_results.py`.
+7. Generate the current comparison plots (baseline + ML 2/3/4 it):
+   ```powershell
+   python visualize/plot_from_config.py --config visualize/plot_config_irisc_ml_latest_2_3_4_vs_baseline.json
+   ```
 
 ## 13) Training Configuration Parameters
 
