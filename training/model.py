@@ -43,7 +43,79 @@ def _resolve_settings(settings):
     s.setdefault("max_pos_weight", MAX_POS_WEIGHT)
     s.setdefault("positive_class_weight_boost", 1.0)
     s.setdefault("mask_logit_threshold", 0.0)
+    s.setdefault("log_every_epochs", 20)
     return s
+
+
+def _safe_div(num, den):
+    return float(num) / float(den) if den else 0.0
+
+
+def _evaluate_metrics(model, data_loader, criterion_flip, active_mask_t, threshold):
+    import torch
+
+    model.eval()
+    active_mask_bool = active_mask_t > 0.5
+
+    val_loss_sum = 0.0
+    bit_correct = 0
+    bit_total = 0
+    exact = 0
+    total = 0
+    tp = 0
+    fp = 0
+    fn = 0
+    pred_pos = 0
+    true_pos = 0
+
+    with torch.no_grad():
+        for xb, yb in data_loader:
+            flip_logits = model(xb)
+            loss_flip_all = criterion_flip(flip_logits, yb)
+            active_count = active_mask_t.sum().clamp_min(1.0)
+            loss = (loss_flip_all * active_mask_t).sum() / (yb.shape[0] * active_count)
+            val_loss_sum += loss.item() * len(xb)
+
+            pred = (flip_logits > float(threshold)).float()
+            pred_b = pred.bool()
+            yb_b = yb.bool()
+
+            active_cols = active_mask_bool.unsqueeze(0).expand_as(pred_b)
+            pred_a = pred_b[active_cols]
+            y_a = yb_b[active_cols]
+
+            bit_correct += (pred_a == y_a).sum().item()
+            bit_total += pred_a.numel()
+
+            eq_active = (pred_b == yb_b) | (~active_cols)
+            exact += eq_active.all(dim=1).sum().item()
+            total += yb.shape[0]
+
+            tp += (pred_a & y_a).sum().item()
+            fp += (pred_a & (~y_a)).sum().item()
+            fn += ((~pred_a) & y_a).sum().item()
+            pred_pos += pred_a.sum().item()
+            true_pos += y_a.sum().item()
+
+    precision = _safe_div(tp, tp + fp)
+    recall = _safe_div(tp, tp + fn)
+    f1 = _safe_div(2.0 * precision * recall, precision + recall) if (precision + recall) > 0 else 0.0
+    bit_acc = _safe_div(bit_correct, bit_total)
+    exact_acc = _safe_div(exact, total)
+
+    return {
+        "val_loss": val_loss_sum,
+        "bit_acc": bit_acc,
+        "exact_acc": exact_acc,
+        "hamming_loss": 1.0 - bit_acc,
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "pred_positive_rate": _safe_div(pred_pos, bit_total),
+        "true_positive_rate": _safe_div(true_pos, bit_total),
+        "samples": int(total),
+        "active_bits_per_sample": int(active_mask_bool.sum().item()),
+    }
 
 
 def train_pytorch_mask_only(X, y, settings=None):
@@ -104,6 +176,9 @@ def train_pytorch_mask_only(X, y, settings=None):
 
     best_exact = 0.0
     best_state = None
+    best_epoch = -1
+    best_metrics = None
+    history = []
 
     for epoch in range(settings["epochs"]):
         model.train()
@@ -122,41 +197,74 @@ def train_pytorch_mask_only(X, y, settings=None):
             train_loss += loss.item() * len(xb)
 
         model.eval()
-        exact = 0
-        bit_correct = 0
-        bit_total = 0
-        total = 0
+        eval_m = _evaluate_metrics(
+            model,
+            test_dl,
+            criterion_flip,
+            active_mask_t,
+            settings["mask_logit_threshold"],
+        )
+        exact_acc = eval_m["exact_acc"]
+        bit_acc = eval_m["bit_acc"]
 
-        with torch.no_grad():
-            for xb, yb in test_dl:
-                flip_logits = model(xb)
-                pred = (flip_logits > float(settings["mask_logit_threshold"])).float()
-
-                exact += (pred == yb).all(dim=1).sum().item()
-                bit_correct += (pred == yb).sum().item()
-                bit_total += yb.numel()
-                total += yb.shape[0]
-
-        exact_acc = exact / total if total > 0 else 0.0
-        bit_acc = bit_correct / bit_total if bit_total > 0 else 0.0
+        history_row = {
+            "epoch": int(epoch + 1),
+            "train_loss": float(train_loss / len(train_ds)),
+            "val_loss": float(eval_m["val_loss"] / len(test_ds)) if len(test_ds) > 0 else 0.0,
+            "exact_acc": float(exact_acc),
+            "bit_acc": float(bit_acc),
+            "hamming_loss": float(eval_m["hamming_loss"]),
+            "precision": float(eval_m["precision"]),
+            "recall": float(eval_m["recall"]),
+            "f1": float(eval_m["f1"]),
+            "pred_positive_rate": float(eval_m["pred_positive_rate"]),
+            "true_positive_rate": float(eval_m["true_positive_rate"]),
+        }
+        history.append(history_row)
 
         if exact_acc > best_exact:
             best_exact = exact_acc
             best_state = {k: v.clone() for k, v in model.state_dict().items()}
+            best_epoch = epoch + 1
+            best_metrics = dict(history_row)
 
-        if (epoch + 1) % 20 == 0:
+        log_every = int(settings.get("log_every_epochs", 20))
+        if log_every <= 0:
+            log_every = 20
+        if (epoch + 1) % log_every == 0:
             print(
-                f"[mask_only] Epoch {epoch+1:3d} | Loss {train_loss/len(train_ds):.4f} | "
-                f"Bit {bit_acc:.3f} | Exact {exact_acc:.3f}"
+                f"[mask_only] Epoch {epoch+1:3d} | "
+                f"TrainLoss {history_row['train_loss']:.4f} | "
+                f"ValLoss {history_row['val_loss']:.4f} | "
+                f"Bit {history_row['bit_acc']:.3f} | "
+                f"Exact {history_row['exact_acc']:.3f} | "
+                f"F1 {history_row['f1']:.3f} | "
+                f"Prec {history_row['precision']:.3f} | "
+                f"Rec {history_row['recall']:.3f}"
             )
 
     if best_state:
         model.load_state_dict(best_state)
 
-    print(f"\n[mask_only] Best exact: {best_exact:.4f}")
+    print(f"\n[mask_only] Best exact: {best_exact:.4f} (epoch {best_epoch})")
+    if best_metrics is not None:
+        print(
+            "[mask_only] Best metrics | "
+            f"ValLoss {best_metrics['val_loss']:.4f} | "
+            f"Bit {best_metrics['bit_acc']:.3f} | "
+            f"Exact {best_metrics['exact_acc']:.3f} | "
+            f"F1 {best_metrics['f1']:.3f} | "
+            f"Prec {best_metrics['precision']:.3f} | "
+            f"Rec {best_metrics['recall']:.3f}"
+        )
 
     metadata = {
         "mask_logit_threshold": float(settings["mask_logit_threshold"]),
+        "active_outputs": int(active_outputs.sum()),
+        "total_outputs": int(output_bits),
+        "best_epoch": int(best_epoch),
+        "best_metrics": best_metrics,
+        "history": history,
     }
 
     return model, mean, std, output_bits, metadata

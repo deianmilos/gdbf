@@ -17,7 +17,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Set
 
 from plot_figures import (
     plot_failed_bits_bar,
@@ -55,6 +55,44 @@ def _build_model_data(
             "markeredgewidth": str(m.get("markeredgewidth", 1.0)),
         }
     return model_rows, model_style
+
+
+def _parse_alpha_values(cfg: dict) -> Set[float] | None:
+    values = cfg.get("alpha_values", None)
+    if values is None:
+        return None
+    if not isinstance(values, list):
+        sys.exit("alpha_values must be a JSON list of numbers, e.g. [0.07, 0.06, 0.05]")
+
+    parsed: Set[float] = set()
+    for v in values:
+        try:
+            parsed.add(float(v))
+        except (TypeError, ValueError):
+            sys.exit(f"Invalid alpha value in alpha_values: {v!r}")
+
+    if len(parsed) == 0:
+        sys.exit("alpha_values was provided but empty; include at least one alpha.")
+    return parsed
+
+
+def _filter_model_rows_by_alpha_values(
+    model_rows: Dict[str, List[ResultRow]],
+    alpha_values: Set[float] | None,
+) -> Dict[str, List[ResultRow]]:
+    if alpha_values is None:
+        return model_rows
+
+    filtered: Dict[str, List[ResultRow]] = {}
+    for name, rows in model_rows.items():
+        kept = [r for r in rows if r.alpha in alpha_values]
+        if len(kept) == 0:
+            sys.exit(
+                f"No rows left for model '{name}' after alpha_values filtering. "
+                f"Check that selected alphas exist in {name} result file."
+            )
+        filtered[name] = kept
+    return filtered
 
 
 def main() -> None:
@@ -135,6 +173,9 @@ def main() -> None:
         sys.exit("Config must contain a non-empty 'models' list")
 
     model_rows, model_style = _build_model_data(models_cfg)
+    alpha_values = _parse_alpha_values(cfg)
+    model_rows = _filter_model_rows_by_alpha_values(model_rows, alpha_values)
+
     if paper_mono:
         apply_monochrome_model_style(model_style)
 

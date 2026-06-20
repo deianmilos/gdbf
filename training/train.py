@@ -6,6 +6,7 @@ Usage:
 """
 
 import argparse
+import csv
 import json
 from pathlib import Path
 
@@ -119,6 +120,47 @@ def _normalize_export_params(params, metadata, training_settings):
     return out
 
 
+def _write_training_metrics(output_dir: Path, code_name: str, metadata: dict):
+    history = metadata.get("history", [])
+    if not history:
+        return
+
+    history_path = output_dir / f"training_metrics_{code_name}.csv"
+    summary_path = output_dir / f"training_summary_{code_name}.json"
+
+    fieldnames = [
+        "epoch",
+        "train_loss",
+        "val_loss",
+        "exact_acc",
+        "bit_acc",
+        "hamming_loss",
+        "precision",
+        "recall",
+        "f1",
+        "pred_positive_rate",
+        "true_positive_rate",
+    ]
+
+    with history_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in history:
+            writer.writerow({k: row.get(k, "") for k in fieldnames})
+
+    summary = {
+        "best_epoch": metadata.get("best_epoch", -1),
+        "best_metrics": metadata.get("best_metrics", {}),
+        "active_outputs": metadata.get("active_outputs", 0),
+        "total_outputs": metadata.get("total_outputs", 0),
+    }
+    with summary_path.open("w", encoding="utf-8") as f:
+        json.dump(summary, f, indent=2)
+
+    print(f"Saved training metrics history -> {history_path}")
+    print(f"Saved training metrics summary -> {summary_path}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Train ML escape model (mask-only) and export C headers.")
     parser.add_argument(
@@ -177,6 +219,8 @@ def main():
         y,
         settings=training_settings,
     )
+
+    _write_training_metrics(output_dir, code_name, metadata)
 
     raw_params = extract_weights_pytorch(model)
     params = _normalize_export_params(raw_params, metadata, training_settings)
