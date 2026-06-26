@@ -1,7 +1,7 @@
-{
+﻿{
   "output_dir": "visualize/plots/irisc_dv3_paper_100it",
   "dpi": 450,
-  "save_pdf": true,
+  "save_pdf": false,
   "show_title": false,
   "legend_loc": "upper right",
   "legend_right": false,
@@ -90,3 +90,4 @@
     }
   ]
 }
+

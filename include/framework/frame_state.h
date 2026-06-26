@@ -136,7 +136,6 @@ typedef struct FrameState {
   /* Config-derived feedback values (pre-computed at frame start) */
   int feedbackLogsEnabled;
   int feedbackIntervalIters;
-  int feedbackDeltaMax;
   int feedbackTargetRows;
 
   /* ---- Frame accumulators ---- */

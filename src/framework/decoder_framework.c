@@ -177,14 +177,12 @@ int DecodeFrameWithConfig(
   /* Derived lengths */
   fs.xLength = X_LENGTH(codeLength, base);
   if (fs.xLength <= 0 || fs.xLength > codeLength) return 1;
-  if (config->quantumOnlySyndrome) fs.xLength = codeLength;
+  if (config->syndromeIncludesParityBits) fs.xLength = codeLength;
 
   /* Config-derived feedback values */
   fs.feedbackLogsEnabled          = (config->feedbackLogsEnabled != 0);
   fs.feedbackIntervalIters        = (config->feedbackMaskWindowIters > 0)
                                       ? config->feedbackMaskWindowIters : 4;
-  fs.feedbackDeltaMax             = (config->feedbackDeltaMax > 0)
-                                      ? config->feedbackDeltaMax : 3;
   fs.feedbackTargetRows           = (config->feedbackTargetRows > 0)
                                       ? config->feedbackTargetRows : 6;
   if (fs.feedbackTargetRows > 128) fs.feedbackTargetRows = 128;

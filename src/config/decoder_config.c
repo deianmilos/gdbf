@@ -118,10 +118,9 @@ void DecoderConfigInitDefaults(DecoderConfig *config)
   config->featureFlags = 0;
   config->featureSelectionExplicit = 0;
   config->pgdbfFlipProbability = 0.7;
-  config->allowedWorsening = 4;
+  config->allowedWorsening = 0;
   config->feedbackTriggerIter = 15;
   config->feedbackMaskWindowIters = 10;
-  config->feedbackDeltaMax = 3;
   config->feedbackTargetRows = 6;
   config->feedbackPrioritySeverityW = 4;
   config->feedbackPriorityPersistenceW = 3;
@@ -130,20 +129,19 @@ void DecoderConfigInitDefaults(DecoderConfig *config)
   config->feedbackSenderStrictObservability = 0;
   config->feedbackLogsEnabled = 1;
   config->feedbackRowSelectionMode = 0;  /* 0 = max severity, 1 = min non-zero severity */
-  config->feedbackShiftSourceMode = 0;   /* 0 = fixed (default), 1 = random, 2 = fixed-number */
-  config->feedbackShiftFixedDelta = 1;
-  config->feedbackContinueFromCurrent = 1;
+  config->feedbackTargetColumnMode = 0;  /* 0 = next participating, 1 = min-energy participating */
   config->mlInvokeOnlyIfBaselineFails = 1;
   config->mlPeriodicInterval = 0;
   config->mlSingleTriggerIter = 0;
   config->mlStagnationPeriodicInterval = 0;
   config->mlOscillationPeriodicInterval = 0;
   config->mlMaxEnergySeedMode = 0;
+  config->resultsExperimentName[0] = '\0';
 
   config->stagnation.energyHistoryLen = 8;
   config->stagnation.stagnationTrigger = 2;
   config->stagnation.oscillationTrigger = 5;
-  config->quantumOnlySyndrome = 0;
+  config->syndromeIncludesParityBits = 0;
 }
 
 int DecoderConfigLoadFromFile(DecoderConfig *config, const char *filePath)
@@ -218,8 +216,6 @@ int DecoderConfigLoadFromFile(DecoderConfig *config, const char *filePath)
       config->feedbackTriggerIter = atoi(v);
     } else if (StrEq(k, "feedback_mask_window_iters")) {
       config->feedbackMaskWindowIters = atoi(v);
-    } else if (StrEq(k, "feedback_delta_max")) {
-      config->feedbackDeltaMax = atoi(v);
     } else if (StrEq(k, "feedback_target_rows")) {
       config->feedbackTargetRows = atoi(v);
     } else if (StrEq(k, "feedback_priority_severity_w")) {
@@ -237,16 +233,9 @@ int DecoderConfigLoadFromFile(DecoderConfig *config, const char *filePath)
     } else if (StrEq(k, "feedback_row_selection_mode")) {
       if (StrEq(v, "min")) config->feedbackRowSelectionMode = 1;
       else config->feedbackRowSelectionMode = 0;  /* default: max */
-    } else if (StrEq(k, "feedback_shift_source_mode")) {
-      if (StrEq(v, "random")) config->feedbackShiftSourceMode = 1;
-      else if (StrEq(v, "fixed_number")) {
-        config->feedbackShiftSourceMode = 2;
-      }
-      else config->feedbackShiftSourceMode = 0;  /* default: fixed */
-    } else if (StrEq(k, "feedback_shift_fixed_delta")) {
-      config->feedbackShiftFixedDelta = atoi(v);
-    } else if (StrEq(k, "feedback_continue_from_current")) {
-      config->feedbackContinueFromCurrent = ParseBoolean(v, config->feedbackContinueFromCurrent);
+    } else if (StrEq(k, "feedback_target_column_mode")) {
+      if (StrEq(v, "min_energy")) config->feedbackTargetColumnMode = 1;
+      else config->feedbackTargetColumnMode = 0;  /* default: next */
     } else if (StrEq(k, "ml_invoke_only_if_baseline_fails")) {
       config->mlInvokeOnlyIfBaselineFails = ParseBoolean(v, config->mlInvokeOnlyIfBaselineFails);
     } else if (StrEq(k, "ml_trigger_mode")) {
@@ -266,14 +255,17 @@ int DecoderConfigLoadFromFile(DecoderConfig *config, const char *filePath)
     } else if (StrEq(k, "ml_max_energy_seed_mode")) {
       if (StrEq(v, "all")) config->mlMaxEnergySeedMode = 1;
       else config->mlMaxEnergySeedMode = 0;
+    } else if (StrEq(k, "results_experiment_name")) {
+      strncpy(config->resultsExperimentName, v, sizeof(config->resultsExperimentName) - 1);
+      config->resultsExperimentName[sizeof(config->resultsExperimentName) - 1] = '\0';
     } else if (StrEq(k, "energy_hist_len")) {
       config->stagnation.energyHistoryLen = atoi(v);
     } else if (StrEq(k, "stagnation_trigger")) {
       config->stagnation.stagnationTrigger = atoi(v);
     } else if (StrEq(k, "oscillation_trigger")) {
       config->stagnation.oscillationTrigger = atoi(v);
-    } else if (StrEq(k, "quantum_only_syndrome")) {
-      config->quantumOnlySyndrome = ParseBoolean(v, config->quantumOnlySyndrome);
+    } else if (StrEq(k, "syndrome_includes_parity_bits")) {
+      config->syndromeIncludesParityBits = ParseBoolean(v, config->syndromeIncludesParityBits);
     }
   }
 
@@ -281,8 +273,6 @@ int DecoderConfigLoadFromFile(DecoderConfig *config, const char *filePath)
 
   if (config->candidateCount < 1) config->candidateCount = 1;
   if (config->feedbackMaskWindowIters < 1) config->feedbackMaskWindowIters = 1;
-  if (config->feedbackDeltaMax < 1) config->feedbackDeltaMax = 1;
-  if (config->feedbackDeltaMax > 64) config->feedbackDeltaMax = 64;
   if (config->feedbackTargetRows < 1) config->feedbackTargetRows = 1;
   if (config->feedbackTargetRows > 128) config->feedbackTargetRows = 128;
   if (config->feedbackPrioritySeverityW < 0) config->feedbackPrioritySeverityW = 0;
@@ -290,11 +280,7 @@ int DecoderConfigLoadFromFile(DecoderConfig *config, const char *filePath)
   if (config->feedbackPriorityFailW < 0) config->feedbackPriorityFailW = 0;
   if (config->feedbackShiftColumnsPerRow < 1) config->feedbackShiftColumnsPerRow = 1;
   if (config->feedbackShiftColumnsPerRow > 3) config->feedbackShiftColumnsPerRow = 3;
-  if (config->feedbackShiftSourceMode < 0) config->feedbackShiftSourceMode = 0;
-  if (config->feedbackShiftSourceMode > 2) config->feedbackShiftSourceMode = 2;
-  if (config->feedbackShiftFixedDelta < 1) config->feedbackShiftFixedDelta = 1;
-  if (config->feedbackShiftFixedDelta > 64) config->feedbackShiftFixedDelta = 64;
-  if (config->feedbackContinueFromCurrent != 0) config->feedbackContinueFromCurrent = 1;
+  if (config->syndromeIncludesParityBits != 0) config->syndromeIncludesParityBits = 1;
   if (config->mlPeriodicInterval < 0) config->mlPeriodicInterval = 0;
   if (config->mlSingleTriggerIter < 0) config->mlSingleTriggerIter = 0;
   if (config->mlStagnationPeriodicInterval < 0) config->mlStagnationPeriodicInterval = 0;
@@ -356,7 +342,6 @@ void DecoderConfigApplyEnv(DecoderConfig *config)
   config->allowedWorsening = ReadEnvInt("GDBF_ALLOWED_WORSENING", config->allowedWorsening);
   config->feedbackTriggerIter = ReadEnvInt("GDBF_FEEDBACK_TRIGGER_ITER", config->feedbackTriggerIter);
   config->feedbackMaskWindowIters = ReadEnvInt("GDBF_FEEDBACK_MASK_WINDOW_ITERS", config->feedbackMaskWindowIters);
-  config->feedbackDeltaMax = ReadEnvInt("GDBF_FEEDBACK_DELTA_MAX", config->feedbackDeltaMax);
   config->feedbackTargetRows = ReadEnvInt("GDBF_FEEDBACK_TARGET_ROWS", config->feedbackTargetRows);
   config->feedbackPrioritySeverityW = ReadEnvInt("GDBF_FEEDBACK_PRIORITY_SEVERITY_W", config->feedbackPrioritySeverityW);
   config->feedbackPriorityPersistenceW = ReadEnvInt("GDBF_FEEDBACK_PRIORITY_PERSISTENCE_W", config->feedbackPriorityPersistenceW);
@@ -364,17 +349,25 @@ void DecoderConfigApplyEnv(DecoderConfig *config)
   config->feedbackShiftColumnsPerRow = ReadEnvInt("GDBF_FEEDBACK_SHIFT_COLUMNS_PER_ROW", config->feedbackShiftColumnsPerRow);
   config->feedbackSenderStrictObservability = ReadEnvInt("GDBF_FEEDBACK_SENDER_STRICT_OBSERVABILITY", config->feedbackSenderStrictObservability);
   config->feedbackLogsEnabled = ReadEnvInt("GDBF_FEEDBACK_LOGS", config->feedbackLogsEnabled);
-  config->feedbackRowSelectionMode = ReadEnvInt("GDBF_FEEDBACK_ROW_SELECTION_MODE", config->feedbackRowSelectionMode);
-  config->feedbackShiftFixedDelta = ReadEnvInt("GDBF_FEEDBACK_SHIFT_FIXED_DELTA", config->feedbackShiftFixedDelta);
-  config->feedbackContinueFromCurrent = ReadEnvInt("GDBF_FEEDBACK_CONTINUE_FROM_CURRENT", config->feedbackContinueFromCurrent);
   {
-    const char *shiftSourceMode = getenv("GDBF_FEEDBACK_SHIFT_SOURCE_MODE");
-    if (StrEq(shiftSourceMode, "random")) config->feedbackShiftSourceMode = 1;
-    else if (StrEq(shiftSourceMode, "fixed_number")) {
-      config->feedbackShiftSourceMode = 2;
+    const char *feedbackRowSelectionMode = getenv("GDBF_FEEDBACK_ROW_SELECTION_MODE");
+    if (StrEq(feedbackRowSelectionMode, "min")) config->feedbackRowSelectionMode = 1;
+    else if (StrEq(feedbackRowSelectionMode, "max")) config->feedbackRowSelectionMode = 0;
+    else config->feedbackRowSelectionMode = ReadEnvInt("GDBF_FEEDBACK_ROW_SELECTION_MODE", config->feedbackRowSelectionMode);
+  }
+  {
+    const char *feedbackTargetColumnMode = getenv("GDBF_FEEDBACK_TARGET_COLUMN_MODE");
+    if (StrEq(feedbackTargetColumnMode, "min_energy")) config->feedbackTargetColumnMode = 1;
+    else if (StrEq(feedbackTargetColumnMode, "next")) config->feedbackTargetColumnMode = 0;
+    else config->feedbackTargetColumnMode = ReadEnvInt("GDBF_FEEDBACK_TARGET_COLUMN_MODE", config->feedbackTargetColumnMode);
+  }
+  config->syndromeIncludesParityBits = ReadEnvInt("GDBF_SYNDROME_INCLUDES_PARITY_BITS", config->syndromeIncludesParityBits);
+  {
+    const char *resultsExperimentName = getenv("GDBF_RESULTS_EXPERIMENT_NAME");
+    if (resultsExperimentName != NULL && *resultsExperimentName != '\0') {
+      strncpy(config->resultsExperimentName, resultsExperimentName, sizeof(config->resultsExperimentName) - 1);
+      config->resultsExperimentName[sizeof(config->resultsExperimentName) - 1] = '\0';
     }
-    else if (StrEq(shiftSourceMode, "fixed")) config->feedbackShiftSourceMode = 0;
-    else config->feedbackShiftSourceMode = ReadEnvInt("GDBF_FEEDBACK_SHIFT_SOURCE_MODE", config->feedbackShiftSourceMode);
   }
   config->pgdbfFlipProbability = ReadEnvDouble("GDBF_PGDBF_P", config->pgdbfFlipProbability);
   config->mlInvokeOnlyIfBaselineFails = ReadEnvInt("GDBF_ML_INVOKE_ONLY_IF_BASELINE_FAILS", config->mlInvokeOnlyIfBaselineFails);
@@ -402,12 +395,6 @@ void DecoderConfigApplyEnv(DecoderConfig *config)
   if (config->feedbackMaskWindowIters < 1) {
     config->feedbackMaskWindowIters = 1;
   }
-  if (config->feedbackDeltaMax < 1) {
-    config->feedbackDeltaMax = 1;
-  }
-  if (config->feedbackDeltaMax > 64) {
-    config->feedbackDeltaMax = 64;
-  }
   if (config->feedbackTargetRows < 1) {
     config->feedbackTargetRows = 1;
   }
@@ -429,20 +416,14 @@ void DecoderConfigApplyEnv(DecoderConfig *config)
   if (config->feedbackShiftColumnsPerRow > 3) {
     config->feedbackShiftColumnsPerRow = 3;
   }
-  if (config->feedbackShiftSourceMode < 0) {
-    config->feedbackShiftSourceMode = 0;
+  if (config->feedbackTargetColumnMode < 0) {
+    config->feedbackTargetColumnMode = 0;
   }
-  if (config->feedbackShiftSourceMode > 2) {
-    config->feedbackShiftSourceMode = 2;
+  if (config->feedbackTargetColumnMode > 1) {
+    config->feedbackTargetColumnMode = 1;
   }
-  if (config->feedbackShiftFixedDelta < 1) {
-    config->feedbackShiftFixedDelta = 1;
-  }
-  if (config->feedbackShiftFixedDelta > 64) {
-    config->feedbackShiftFixedDelta = 64;
-  }
-  if (config->feedbackContinueFromCurrent != 0) {
-    config->feedbackContinueFromCurrent = 1;
+  if (config->syndromeIncludesParityBits != 0) {
+    config->syndromeIncludesParityBits = 1;
   }
   if (config->mlPeriodicInterval < 0) {
     config->mlPeriodicInterval = 0;

@@ -24,6 +24,7 @@ typedef struct
   int maxFailedBitErrors;
   long long sumFailedBitErrors;  /* Use long long to avoid overflow */
   int failedFrameCount;
+  int failedZeroBitErrorAnomalyCount;
 
   /* FEEDBACK_SHIFT auxiliary-equation statistics (per frame) */
   int minAddedAuxEquations;
@@ -34,6 +35,8 @@ typedef struct
   int minUnsuccessfulRoundsToSyndrome0;
   int maxUnsuccessfulRoundsToSyndrome0;
   long long sumUnsuccessfulRoundsToSyndrome0;
+  int minUnsuccessfulRoundsToSyndrome0Count;
+  int maxUnsuccessfulRoundsToSyndrome0Count;
   int syndrome0FrameCount;
 
   /* FEEDBACK_SHIFT count of max-energy bits before each feedback request */

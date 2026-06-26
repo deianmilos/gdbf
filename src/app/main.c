@@ -7,67 +7,12 @@
 #include "stats.h"
 #include "app/logging.h"
 #include "app/args_and_config.h"
-#include <io.h>
-#include <direct.h>
+#include "app/run_io.h"
 #include <unistd.h>
 
 FILE *datasetFile = NULL;
 
 #define AUX_EQ_HIST_MAX 256
-
-/* Utility functions for file I/O and path handling */
-static void EnsureDir(const char *path)
-{
-  char tmp[512];
-  char *p;
-
-  strncpy(tmp, path, sizeof(tmp) - 1);
-  tmp[sizeof(tmp) - 1] = '\0';
-
-  for (p = tmp + 1; *p; p++) {
-    if (*p == '/' || *p == '\\') {
-      char c = *p;
-      *p = '\0';
-      _mkdir(tmp);
-      *p = c;
-    }
-  }
-  _mkdir(tmp);
-}
-
-static const char *DecoderTypeToName(DecoderType type)
-{
-  switch (type) {
-    case DECODER_TYPE_FEEDBACK_SHIFT:
-      return "feedback_shift";
-    case DECODER_TYPE_ML_FEEDBACK:
-      return "ml_feedback";
-    case DECODER_TYPE_PGDBF:
-      return "pgdbf";
-    case DECODER_TYPE_ML:
-      return "ml";
-    case DECODER_TYPE_GDBF:
-    default:
-      return "baseline";
-  }
-}
-
-static const char *DecoderTypeToBanner(DecoderType type)
-{
-  switch (type) {
-    case DECODER_TYPE_PGDBF:
-      return "-------------------------La-P-GDBF--------------------------------------------------\n";
-    case DECODER_TYPE_ML:
-      return "-------------------------La-ML-GDBF-------------------------------------------------\n";
-    case DECODER_TYPE_FEEDBACK_SHIFT:
-      return "-------------------------La-FEEDBACK-SHIFT-------------------------------------------\n";
-    case DECODER_TYPE_ML_FEEDBACK:
-      return "-------------------------La-ML-FEEDBACK----------------------------------------------\n";
-    case DECODER_TYPE_GDBF:
-    default:
-      return "-------------------------La-GDBF--------------------------------------------------\n";
-  }
-}
 
 int main(int argc, char *argv[])
 {
@@ -79,13 +24,9 @@ int main(int argc, char *argv[])
   char codeName[256];
   char matrixFilePath[512];
   char baseMatrixPrefix[512];
-  char resultDir[512];
-  char resultFileName[512];
-  char mlSummaryCsvPath[512];
-  char mlDiagnosticsCsvPath[512];
-  char mlFailureCsvPath[512];
+  RunOutputPaths outputPaths;
   FILE *mlFailureFile = NULL;
-  const char *runType;
+  FILE *feedbackShiftSummaryFile = NULL;
   DecoderConfig decoderConfig;
   DecoderRuntimeStats decoderRuntimeStats;
   char decoderConfigPath[512] = "configs/decoder/default.cfg";
@@ -212,17 +153,25 @@ int main(int argc, char *argv[])
     return 1;
   }
 
+  /* ---- RESULT DIRECTORY SETUP (early) ---- */
+  if (SetupRunOutputPaths(codeName, decoderConfigPath, &decoderConfig, &outputPaths, &fout) != 0) {
+    return 1;
+  }
+
   /* ---- MATRIX LOADING ---- */
   if (LoadSparseMatrixData(matrixFilePath, &matrix) != 0) {
+    fclose(fout);
     return 1;
   }
 
   if (LoadBaseMatrixData(baseMatrixPrefix, &base) != 0) {
+    fclose(fout);
     FreeSparseMatrixData(&matrix);
     return 1;
   }
 
   if (BuildEncodingTransformFromSparseMatrix(&matrix, &encoding) != 0) {
+    fclose(fout);
     FreeBaseMatrixData(&base);
     FreeSparseMatrixData(&matrix);
     return 1;
@@ -250,39 +199,26 @@ int main(int argc, char *argv[])
 
   printf("%s", DecoderTypeToBanner(decoderConfig.decoderType));
 
-  /* ---- RESULT DIRECTORY SETUP ---- */
-  if (decoderConfig.enableDatasetCollection) {
-    runType = "collect";
-  } else {
-    runType = DecoderTypeToName(decoderConfig.decoderType);
-  }
-  snprintf(resultDir, sizeof(resultDir), "results/%s/%s", codeName, runType);
-  EnsureDir(resultDir);
-  snprintf(resultFileName, sizeof(resultFileName), "%s/simulation_4it.res", resultDir);
-  snprintf(mlSummaryCsvPath, sizeof(mlSummaryCsvPath), "%s/ml_outcome_summary_4it.csv", resultDir);
-  snprintf(mlDiagnosticsCsvPath, sizeof(mlDiagnosticsCsvPath), "%s/ml_diagnostics_4it.csv", resultDir);
-  snprintf(mlFailureCsvPath, sizeof(mlFailureCsvPath), "%s/ml_failure_cases_4it.csv", resultDir);
-
-  fout = fopen(resultFileName, "a+");
-  if (fout == NULL) {
-    fprintf(stderr, "Output file %s error!.. Abort\n", resultFileName);
-    FreeEncodingTransformData(&encoding);
-    FreeBaseMatrixData(&base);
-    FreeSparseMatrixData(&matrix);
-    return 1;
-  }
-
   PrintStatsHeader(
     fout,
     decoderConfig.decoderType == DECODER_TYPE_FEEDBACK_SHIFT || decoderConfig.decoderType == DECODER_TYPE_ML_FEEDBACK,
     base.CirculantSize);
 
+  if (decoderConfig.decoderType == DECODER_TYPE_FEEDBACK_SHIFT || decoderConfig.decoderType == DECODER_TYPE_ML_FEEDBACK) {
+    feedbackShiftSummaryFile = fopen(outputPaths.feedbackShiftSummaryPath, "a+");
+    if (feedbackShiftSummaryFile == NULL) {
+      fprintf(stderr, "WARNING: cannot open feedback summary file: %s\n", outputPaths.feedbackShiftSummaryPath);
+    } else {
+      setvbuf(feedbackShiftSummaryFile, NULL, _IOLBF, 0);
+    }
+  }
+
   if (decoderConfig.decoderType == DECODER_TYPE_ML || decoderConfig.decoderType == DECODER_TYPE_ML_FEEDBACK) {
-    int csvExists = (access(mlFailureCsvPath, 0) == 0);
+    int csvExists = (access(outputPaths.mlFailureCsvPath, 0) == 0);
     int recreateCsv = 0;
 
     if (csvExists) {
-      FILE *hdr = fopen(mlFailureCsvPath, "r");
+      FILE *hdr = fopen(outputPaths.mlFailureCsvPath, "r");
       if (hdr != NULL) {
         char headerLine[1024];
         if (fgets(headerLine, sizeof(headerLine), hdr) != NULL) {
@@ -299,9 +235,9 @@ int main(int argc, char *argv[])
       }
     }
 
-    mlFailureFile = fopen(mlFailureCsvPath, recreateCsv ? "w" : "a");
+    mlFailureFile = fopen(outputPaths.mlFailureCsvPath, recreateCsv ? "w" : "a");
     if (mlFailureFile == NULL) {
-      fprintf(stderr, "WARNING: cannot open ML failure CSV: %s\n", mlFailureCsvPath);
+      fprintf(stderr, "WARNING: cannot open ML failure CSV: %s\n", outputPaths.mlFailureCsvPath);
     } else if (!csvExists || recreateCsv) {
       fprintf(mlFailureFile,
         "alpha,frame_index_alpha,frame_index_global,used_iterations,frame_bit_errors,is_codeword,ml_invoked,ml_calls_in_frame,error_vn_indices,error_vn_last5_energies,global_max_last5_energies,global_max_vn_indices_last5,ml_proposed_vn_indices,ml_proposed_error_overlap\n");
@@ -330,7 +266,7 @@ int main(int argc, char *argv[])
     int featureCount = decoderConfig.candidateCount * featureDim;
     int labelCount = decoderConfig.candidateCount;
     snprintf(datasetDir, sizeof(datasetDir), "datasets/%s", codeName);
-    EnsureDir(datasetDir);
+    EnsureDirRecursive(datasetDir);
     snprintf(datasetPath, sizeof(datasetPath), "%s/dataset.csv", datasetDir);
     datasetExists = (access(datasetPath, 0) == 0);
 
@@ -357,7 +293,7 @@ int main(int argc, char *argv[])
 
     datasetFile = fopen(datasetPath, recreateDataset ? "w" : "a");
     if (!datasetFile) {
-        printf("ERROR opening dataset file\n");
+        fprintf(stderr, "ERROR opening dataset file: %s\n", datasetPath);
         return 1;
     }
     if (!datasetExists || recreateDataset)
@@ -411,6 +347,8 @@ int main(int argc, char *argv[])
     long long alphaFeedbackSuccess = 0;
     long long alphaNotManagedDecode = 0;
     long long alphaFramesTested = 0;
+    long long alphaFramesNoFeedbackRound = 0;
+    long long alphaFramesEnteredFeedbackRound = 0;
     long long alphaFramesDecodedClean = 0;
     long long alphaFramesBaselineOnlyDecoded = 0;
     long long alphaFramesMlNeeded = 0;
@@ -443,7 +381,12 @@ int main(int argc, char *argv[])
       long long mlEscapesBefore = decoderRuntimeStats.mlEscapes;
       long long mlCorrectedBitsBefore = decoderRuntimeStats.mlCorrectedBits;
 
-      if (decoderConfig.quantumOnlySyndrome) {
+      /*
+       * Syndrome scope configuration:
+       * - syndromeIncludesParityBits = 0: noise/inference scope is information bits only.
+       * - syndromeIncludesParityBits = 1: noise/inference scope includes parity bits too.
+       */
+      if (decoderConfig.syndromeIncludesParityBits) {
         EncodeRandomCodeword(
           encoding.Rank,
           matrix.N,
@@ -514,6 +457,11 @@ int main(int argc, char *argv[])
 
       {
         cleanDecoded = (isCodeword && frameBitErrors == 0);
+        if (shiftMatrixGenerations > 0) {
+          alphaFramesEnteredFeedbackRound++;
+        } else {
+          alphaFramesNoFeedbackRound++;
+        }
         overallFramesTested++;
         alphaFramesTested++;
         if (cleanDecoded) {
@@ -701,7 +649,8 @@ int main(int argc, char *argv[])
 
     if (decoderConfig.decoderType == DECODER_TYPE_FEEDBACK_SHIFT || decoderConfig.decoderType == DECODER_TYPE_ML_FEEDBACK) {
       PrintFeedbackShiftDistributionSummary(
-        fout,
+        NULL,
+        feedbackShiftSummaryFile,
         alpha,
         alphaFramesTested,
         alphaNoFeedbackSuccess,
@@ -709,12 +658,32 @@ int main(int argc, char *argv[])
         alphaNotManagedDecode,
         alphaFeedbackSuccessAuxEqHist,
         alphaFeedbackSuccessAuxEqOverflow);
+
+      AppendFeedbackShiftAlphaSummaryCsv(
+        outputPaths.feedbackShiftAlphaSummaryCsvPath,
+        alpha,
+        alphaFramesTested,
+        alphaFramesNoFeedbackRound,
+        alphaFramesEnteredFeedbackRound,
+        alphaNoFeedbackSuccess,
+        alphaFeedbackSuccess,
+        alphaNotManagedDecode,
+        alphaFeedbackSuccessAuxEqHist,
+        alphaFeedbackSuccessAuxEqOverflow);
+
+      AppendFeedbackShiftGenHistogramCsv(
+        outputPaths.feedbackShiftGenHistCsvPath,
+        alpha,
+        alphaFramesTested,
+        alphaFeedbackSuccess,
+        alphaFeedbackSuccessAuxEqHist,
+        alphaFeedbackSuccessAuxEqOverflow);
     }
     
     if (decoderConfig.decoderType == DECODER_TYPE_ML || decoderConfig.decoderType == DECODER_TYPE_ML_FEEDBACK) {
       AppendMlOutcomeSummaryCsvPerAlpha(
-        mlSummaryCsvPath,
-        resultFileName,
+        outputPaths.mlSummaryCsvPath,
+        outputPaths.resultFilePath,
         NbMonteCarlo,
         maxDecoderIterations,
         NBframes,
@@ -751,6 +720,7 @@ int main(int argc, char *argv[])
   free(shiftedLayerVariableBuffer);
 
   fclose(fout);
+  if (feedbackShiftSummaryFile) fclose(feedbackShiftSummaryFile);
   FreeEncodingTransformData(&encoding);
   FreeBaseMatrixData(&base);
   FreeSparseMatrixData(&matrix);
@@ -761,8 +731,8 @@ int main(int argc, char *argv[])
   /* ---- FINAL DIAGNOSTICS ---- */
   if (decoderConfig.decoderType == DECODER_TYPE_ML || decoderConfig.decoderType == DECODER_TYPE_ML_FEEDBACK) {
     AppendMlDiagnosticsCsvOverall(
-      mlDiagnosticsCsvPath,
-      resultFileName,
+      outputPaths.mlDiagnosticsCsvPath,
+      outputPaths.resultFilePath,
       NbMonteCarlo,
       maxDecoderIterations,
       NBframes,
@@ -790,10 +760,10 @@ int main(int argc, char *argv[])
       overallCorrectedBitsPerSuccessfulFrameMax,
       overallCorrectedBitsPerSuccessfulFrameSum);
 
-    printf("\nML diagnostics CSV written to        : %s\n", mlDiagnosticsCsvPath);
-    printf("  Per-alpha ML summary CSV written to : %s\n", mlSummaryCsvPath);
+    printf("\nML diagnostics CSV written to        : %s\n", outputPaths.mlDiagnosticsCsvPath);
+    printf("  Per-alpha ML summary CSV written to : %s\n", outputPaths.mlSummaryCsvPath);
     if (mlFailureFile != NULL) {
-      printf("  ML failure cases CSV written to      : %s\n", mlFailureCsvPath);
+      printf("  ML failure cases CSV written to      : %s\n", outputPaths.mlFailureCsvPath);
     }
   }
 

@@ -57,7 +57,7 @@ python -m pip install torch numpy pandas matplotlib
 ## 3) Build
 
 ```powershell
-gcc -Iinclude -Iinclude/common -Iinclude/core -Iinclude/feedback -Iinclude/ml -Iinclude/framework -Iinclude/config -Iinclude/stats -O2 -Wno-unused-variable -o GDBF src/app/main.c src/app/args_and_config.c src/app/logging.c src/core/matrix_io.c src/core/encoding.c src/core/channel.c src/core/decoder.c src/core/stagnation_detection.c src/feedback/decoder_feedback_shift.c src/feedback/decoder_receiver.c src/feedback/feedback_round.c src/ml/decoder_ml.c src/ml/decoder_perturb.c src/ml/candidate_selection.c src/ml/feature_extractor.c src/ml/labeling_strategy.c src/ml/dataset_writer.c src/ml/ml_round.c src/config/decoder_config.c src/stats/stats.c src/framework/frame_setup.c src/framework/decoder_framework.c -lm
+gcc -Iinclude -Iinclude/common -Iinclude/core -Iinclude/feedback -Iinclude/ml -Iinclude/framework -Iinclude/config -Iinclude/stats -O2 -Wno-unused-variable -o GDBF src/app/main.c src/app/args_and_config.c src/app/run_io.c src/app/logging.c src/core/matrix_io.c src/core/encoding.c src/core/channel.c src/core/decoder.c src/core/stagnation_detection.c src/feedback/decoder_feedback_shift.c src/feedback/decoder_receiver.c src/feedback/feedback_round.c src/ml/decoder_ml.c src/ml/decoder_perturb.c src/ml/candidate_selection.c src/ml/feature_extractor.c src/ml/labeling_strategy.c src/ml/dataset_writer.c src/ml/ml_round.c src/config/decoder_config.c src/stats/stats.c src/framework/frame_setup.c src/framework/decoder_framework.c -lm
 ```
 
 
@@ -158,7 +158,7 @@ Switch mode by changing cfg file (or `decoder_type` inside it), then run the sam
 
 - `decoder_type = feedback_shift`
 - tune `feedback_trigger_iter` and related `feedback_*` keys
-- set `feedback_continue_from_current = 1|0` to choose whether post-feedback decoding continues from the current state or restarts from the received word
+- set `syndrome_includes_parity_bits = 0|1` to control syndrome scope (`0` = information bits only, `1` = full codeword including parity bits)
 
 ### ML + Feedback hybrid mode (`ml_feedback`)
 
@@ -241,7 +241,7 @@ Rebuild `GDBF` so the latest generated headers are compiled in:
 
 ```powershell
 if (Test-Path .\GDBF.exe) { Remove-Item .\GDBF.exe }
-gcc -Iinclude -Iinclude/common -Iinclude/core -Iinclude/feedback -Iinclude/ml -Iinclude/framework -Iinclude/config -Iinclude/stats -O2 -Wno-unused-variable -o GDBF src/app/main.c src/app/args_and_config.c src/app/logging.c src/core/matrix_io.c src/core/encoding.c src/core/channel.c src/core/decoder.c src/core/stagnation_detection.c src/feedback/decoder_feedback_shift.c src/feedback/decoder_receiver.c src/feedback/feedback_round.c src/ml/decoder_ml.c src/ml/decoder_perturb.c src/ml/candidate_selection.c src/ml/feature_extractor.c src/ml/labeling_strategy.c src/ml/dataset_writer.c src/ml/ml_round.c src/config/decoder_config.c src/stats/stats.c src/framework/frame_setup.c src/framework/decoder_framework.c -lm
+gcc -Iinclude -Iinclude/common -Iinclude/core -Iinclude/feedback -Iinclude/ml -Iinclude/framework -Iinclude/config -Iinclude/stats -O2 -Wno-unused-variable -o GDBF src/app/main.c src/app/args_and_config.c src/app/run_io.c src/app/logging.c src/core/matrix_io.c src/core/encoding.c src/core/channel.c src/core/decoder.c src/core/stagnation_detection.c src/feedback/decoder_feedback_shift.c src/feedback/decoder_receiver.c src/feedback/feedback_round.c src/ml/decoder_ml.c src/ml/decoder_perturb.c src/ml/candidate_selection.c src/ml/feature_extractor.c src/ml/labeling_strategy.c src/ml/dataset_writer.c src/ml/ml_round.c src/config/decoder_config.c src/stats/stats.c src/framework/frame_setup.c src/framework/decoder_framework.c -lm
 ```
 
 ## 11) Plot Current IRISC Comparison (Baseline + ML 2/3/4 it)
@@ -273,7 +273,7 @@ python visualize/plot_results.py --baseline results/wifin_r_1_2/baseline/simulat
 
 1. Build `GDBF`:
    ```powershell
-   gcc -Iinclude -Iinclude/common -Iinclude/core -Iinclude/feedback -Iinclude/ml -Iinclude/framework -Iinclude/config -Iinclude/stats -O2 -Wno-unused-variable -o GDBF src/app/main.c src/app/args_and_config.c src/app/logging.c src/core/matrix_io.c src/core/encoding.c src/core/channel.c src/core/decoder.c src/core/stagnation_detection.c src/feedback/decoder_feedback_shift.c src/feedback/decoder_receiver.c src/feedback/feedback_round.c src/ml/decoder_ml.c src/ml/decoder_perturb.c src/ml/candidate_selection.c src/ml/feature_extractor.c src/ml/labeling_strategy.c src/ml/dataset_writer.c src/ml/ml_round.c src/config/decoder_config.c src/stats/stats.c src/framework/frame_setup.c src/framework/decoder_framework.c -lm
+   gcc -Iinclude -Iinclude/common -Iinclude/core -Iinclude/feedback -Iinclude/ml -Iinclude/framework -Iinclude/config -Iinclude/stats -O2 -Wno-unused-variable -o GDBF src/app/main.c src/app/args_and_config.c src/app/run_io.c src/app/logging.c src/core/matrix_io.c src/core/encoding.c src/core/channel.c src/core/decoder.c src/core/stagnation_detection.c src/feedback/decoder_feedback_shift.c src/feedback/decoder_receiver.c src/feedback/feedback_round.c src/ml/decoder_ml.c src/ml/decoder_perturb.c src/ml/candidate_selection.c src/ml/feature_extractor.c src/ml/labeling_strategy.c src/ml/dataset_writer.c src/ml/ml_round.c src/config/decoder_config.c src/stats/stats.c src/framework/frame_setup.c src/framework/decoder_framework.c -lm
    ```
 2. Run baseline sweep with `configs/decoder/baseline.cfg`.
 3. Run collect mode to generate dataset with `configs/decoder/collect_top6_corrective_mask.cfg`.
@@ -284,7 +284,7 @@ python visualize/plot_results.py --baseline results/wifin_r_1_2/baseline/simulat
 5. Rebuild `GDBF` to include newly generated headers:
    ```powershell
    if (Test-Path .\GDBF.exe) { Remove-Item .\GDBF.exe }
-   gcc -Iinclude -Iinclude/common -Iinclude/core -Iinclude/feedback -Iinclude/ml -Iinclude/framework -Iinclude/config -Iinclude/stats -O2 -Wno-unused-variable -o GDBF src/app/main.c src/app/args_and_config.c src/app/logging.c src/core/matrix_io.c src/core/encoding.c src/core/channel.c src/core/decoder.c src/core/stagnation_detection.c src/feedback/decoder_feedback_shift.c src/feedback/decoder_receiver.c src/feedback/feedback_round.c src/ml/decoder_ml.c src/ml/decoder_perturb.c src/ml/candidate_selection.c src/ml/feature_extractor.c src/ml/labeling_strategy.c src/ml/dataset_writer.c src/ml/ml_round.c src/config/decoder_config.c src/stats/stats.c src/framework/frame_setup.c src/framework/decoder_framework.c -lm
+   gcc -Iinclude -Iinclude/common -Iinclude/core -Iinclude/feedback -Iinclude/ml -Iinclude/framework -Iinclude/config -Iinclude/stats -O2 -Wno-unused-variable -o GDBF src/app/main.c src/app/args_and_config.c src/app/run_io.c src/app/logging.c src/core/matrix_io.c src/core/encoding.c src/core/channel.c src/core/decoder.c src/core/stagnation_detection.c src/feedback/decoder_feedback_shift.c src/feedback/decoder_receiver.c src/feedback/feedback_round.c src/ml/decoder_ml.c src/ml/decoder_perturb.c src/ml/candidate_selection.c src/ml/feature_extractor.c src/ml/labeling_strategy.c src/ml/dataset_writer.c src/ml/ml_round.c src/config/decoder_config.c src/stats/stats.c src/framework/frame_setup.c src/framework/decoder_framework.c -lm
    ```
 6. Run ML mode with `configs/decoder/best_ml_escape.cfg`.
 7. Generate the current comparison plots (baseline + ML 2/3/4 it):

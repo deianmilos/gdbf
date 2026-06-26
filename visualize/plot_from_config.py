@@ -31,7 +31,7 @@ from plot_style import apply_monochrome_model_style, apply_paper_style, get_figu
 
 
 def _load_config(path: Path) -> dict:
-    with path.open("r", encoding="utf-8") as f:
+    with path.open("r", encoding="utf-8-sig") as f:
         return json.load(f)
 
 
@@ -162,11 +162,18 @@ def main() -> None:
 
     plot_ber_only       = bool(cfg.get("plot_ber", True))
     plot_combined       = bool(cfg.get("plot_combined_fer_ber", False))
+    plot_fer_poly       = bool(cfg.get("plot_fer_poly", False))
     plot_failed_hist    = bool(cfg.get("plot_failed_bits_histogram", False))
+    plot_failed_summary = bool(cfg.get("plot_failed_bits_summary", False))
     failed_hist_bins    = int(cfg.get("failed_bits_histogram_bins", 16))
     failed_hist_alpha   = float(cfg.get("failed_bits_histogram_alpha", 0.45))
     ber_linestyle       = str(cfg.get("ber_linestyle", ":"))
-    ferber_legend_title = cfg.get("fer_ber_legend_title", "Solid = FER, Dotted = BER")
+    ferber_legend_title = cfg.get("fer_ber_legend_title", "")
+
+    fer_poly_degree        = int(cfg.get("fer_poly_degree", poly_degree))
+    fer_poly_interp_points = int(cfg.get("fer_poly_interp_points", interp_points))
+    fer_poly_smooth_window = int(cfg.get("fer_poly_smooth_window", smooth_window))
+    fer_poly_show_raw      = bool(cfg.get("fer_poly_show_raw_markers", show_raw_markers))
 
     models_cfg = cfg.get("models", [])
     if not models_cfg:
@@ -237,6 +244,24 @@ def main() -> None:
         **shared,
     )
 
+    if plot_fer_poly:
+        plot_metric(
+            output_path=output_dir / cfg.get("fer_poly_filename", "fer_poly_paper.png"),
+            title=titles.get("fer_poly", titles.get("fer", "FER Comparison") + " (poly fit)"),
+            xlabel=axis_labels.get("fer_x", "Alpha"),
+            ylabel=axis_labels.get("fer_y", "FER"),
+            metric="fer",
+            figure_size=get_figure_size(cfg, "fer", (3.5, 2.7)),
+            **{
+                **shared,
+                "fit_mode": "poly",
+                "poly_degree": fer_poly_degree,
+                "interp_points": fer_poly_interp_points,
+                "smooth_window": fer_poly_smooth_window,
+                "show_raw_markers": fer_poly_show_raw,
+            },
+        )
+
     if plot_ber_only:
         plot_metric(
             output_path=output_dir / cfg.get("ber_filename", "ber_paper.png"),
@@ -278,22 +303,23 @@ def main() -> None:
         },
     )
 
-    plot_failed_bits_summary(
-        output_path_min=output_dir / cfg.get("failed_bits_min_filename", "failed_bits_min.png"),
-        output_path_avg=output_dir / cfg.get("failed_bits_avg_filename", "failed_bits_avg.png"),
-        output_path_max=output_dir / cfg.get("failed_bits_max_filename", "failed_bits_max.png"),
-        title_min=titles.get("failed_bits_min", "Min residual bit errors in failed frames"),
-        title_avg=titles.get("failed_bits_avg", "Avg residual bit errors in failed frames"),
-        title_max=titles.get("failed_bits_max", "Max residual bit errors in failed frames"),
-        model_rows=model_rows,
-        model_style=model_style,
-        dpi=dpi,
-        figure_size=get_figure_size(cfg, "failed_bits_per", (5.2, 3.8)),
-        show_title=show_title,
-        save_pdf=save_pdf,
-        alpha_x_min_override=alpha_x_min,
-        alpha_x_max_override=alpha_x_max,
-    )
+    if plot_failed_summary:
+        plot_failed_bits_summary(
+            output_path_min=output_dir / cfg.get("failed_bits_min_filename", "failed_bits_min.png"),
+            output_path_avg=output_dir / cfg.get("failed_bits_avg_filename", "failed_bits_avg.png"),
+            output_path_max=output_dir / cfg.get("failed_bits_max_filename", "failed_bits_max.png"),
+            title_min=titles.get("failed_bits_min", "Min residual bit errors in failed frames"),
+            title_avg=titles.get("failed_bits_avg", "Avg residual bit errors in failed frames"),
+            title_max=titles.get("failed_bits_max", "Max residual bit errors in failed frames"),
+            model_rows=model_rows,
+            model_style=model_style,
+            dpi=dpi,
+            figure_size=get_figure_size(cfg, "failed_bits_per", (5.2, 3.8)),
+            show_title=show_title,
+            save_pdf=save_pdf,
+            alpha_x_min_override=alpha_x_min,
+            alpha_x_max_override=alpha_x_max,
+        )
 
     _bar_kw = dict(
         model_rows=model_rows,

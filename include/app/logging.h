@@ -11,11 +11,32 @@ void PrintUsage(const char *program);
 
 void PrintFeedbackShiftDistributionSummary(
   FILE *fout,
+  FILE *feedbackSummaryFile,
   float alpha,
   long long framesTested,
   long long framesNoFeedbackSuccess,
   long long framesFeedbackSuccess,
   long long framesNotManagedDecode,
+  const long long *feedbackSuccessAuxEqHist,
+  long long feedbackSuccessAuxEqOverflow);
+
+void AppendFeedbackShiftAlphaSummaryCsv(
+  const char *csvPath,
+  float alpha,
+  long long framesTested,
+  long long framesNoFeedbackRound,
+  long long framesEnteredFeedbackRound,
+  long long framesNoFeedbackSuccess,
+  long long framesFeedbackSuccess,
+  long long framesNotManagedDecode,
+  const long long *feedbackSuccessAuxEqHist,
+  long long feedbackSuccessAuxEqOverflow);
+
+void AppendFeedbackShiftGenHistogramCsv(
+  const char *csvPath,
+  float alpha,
+  long long framesTested,
+  long long framesFeedbackSuccess,
   const long long *feedbackSuccessAuxEqHist,
   long long feedbackSuccessAuxEqOverflow);
 

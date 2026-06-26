@@ -11,6 +11,7 @@ CFLAGS  = -Iinclude \
 
 SRCS    = src/app/main.c \
           src/app/args_and_config.c \
+          src/app/run_io.c \
           src/app/logging.c \
           src/core/matrix_io.c \
           src/core/encoding.c \
