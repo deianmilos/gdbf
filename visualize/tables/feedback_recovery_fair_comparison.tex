@@ -1,0 +1,24 @@
+% Fair window comparison: averaged across strategies
+% Requires in preamble: \usepackage{booktabs,longtable}
+\begin{center}
+\small
+\setlength{\tabcolsep}{4.5pt}
+\renewcommand{\arraystretch}{1.05}
+\begin{longtable}{l r r r r}
+\caption{Fair window comparison: recovery metrics averaged across all strategies (A--D). Success rate: \% of feedback requests that result in recovered frames. Avg round: average number of feedback rounds needed per recovered frame. Recovered per request: frames recovered per feedback request made.}\label{tab:recovery-window-comparison}\\
+\toprule
+Window & Success Rate & Avg Recovery Round & Recovered/Request & R1 Distribution \\
+\midrule
+\endfirsthead
+\toprule
+Window & Success Rate & Avg Recovery Round & Recovered/Request & R1 Distribution \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+$w=3$ & 93.4\% & 3.42 & 0.934 & 24.4\% \\
+$w=4$ & 94.8\% & 3.15 & 0.948 & 28.5\% \\
+$w=5$ & 93.2\% & 2.92 & 0.932 & 32.2\% \\
+$w=6$ & 93.4\% & 2.78 & 0.934 & 34.3\% \\
+\end{longtable}
+\end{center}

@@ -1,0 +1,22 @@
+% Full appendix section for thesis integration
+% Requires in preamble: \usepackage{booktabs,longtable,multirow}
+
+\appendix
+\clearpage
+\section*{Appendix A: Additional Results}
+\addcontentsline{toc}{section}{Appendix A: Additional Results}
+\label{app:additional-results}
+
+This appendix reports the consolidated decoding-performance tables used in the main analysis.
+
+\subsection{FER Improvement Across All Strategies and Window Sizes}
+\label{app:fer-all-windows}
+\input{visualize/tables/fer_delta_vs_baseline_all_models_windows.tex}
+
+\subsection{Average Iteration Delta Across All Strategies and Window Sizes}
+\label{app:iter-all-windows}
+\input{visualize/tables/iter_delta_vs_baseline_all_models_windows.tex}
+
+\subsection{Feedback Recovery-Depth Statistics}
+\label{app:feedback-recovery-depth}
+\input{visualize/tables/feedback_shift_stats_summary.tex}

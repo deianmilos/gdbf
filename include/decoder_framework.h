@@ -33,7 +33,6 @@ typedef struct {
   int allowedWorsening;
   int feedbackTriggerIter;
   int feedbackMaskWindowIters;
-  int feedbackDeltaMax;
   int feedbackTargetRows;
   int feedbackPrioritySeverityW;
   int feedbackPriorityPersistenceW;
@@ -42,9 +41,7 @@ typedef struct {
   int feedbackSenderStrictObservability;
   int feedbackLogsEnabled;
   int feedbackRowSelectionMode;  /* 0 = max severity (default), 1 = min non-zero severity */
-  int feedbackShiftSourceMode;   /* 0 = fixed (sat-check guided + fallback), 1 = random, 2 = fixed-number */
-  int feedbackShiftFixedDelta;   /* used when feedbackShiftSourceMode == 2 */
-  int feedbackContinueFromCurrent; /* 1 = continue from current decoded state, 0 = restart from received word after feedback apply */
+  int feedbackTargetColumnMode;  /* 0 = next participating column, 1 = participating column with minimum energy */
   int mlInvokeOnlyIfBaselineFails;
   MLTriggerMode mlTriggerMode;        /* NONE | PERIODIC | STATE_BASED */
   int mlPeriodicInterval;             /* periodic: ML every N iterations */
@@ -53,7 +50,8 @@ typedef struct {
   int mlOscillationPeriodicInterval;  /* state-based: periodic ML while oscillating (0 disables) */
   int mlStartAfterStuck;              /* 1 = enable periodic ML only after first stuck state, 0 = disable (default) */
   int mlMaxEnergySeedMode; /* 0 = single max-energy seed, 1 = run inference for all max-energy seeds */
-  int quantumOnlySyndrome;
+  char resultsExperimentName[128]; /* Optional extra subfolder under results/<code>/<mode>/ */
+  int syndromeIncludesParityBits; /* 0 = syndrome over information bits only, 1 = syndrome over full codeword (includes parity bits) */
   StagnationConfig stagnation;
 } DecoderConfig;
 

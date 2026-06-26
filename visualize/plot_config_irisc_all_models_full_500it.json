@@ -1,6 +1,7 @@
 {
   "output_dir": "visualize/plots/irisc_dv3_500it_random",
   "dpi": 450,
+  "save_pdf": false,
   "font_size": 11,
   "smooth_curves": true,
   "fit_mode": "poly",

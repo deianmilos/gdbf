@@ -1,0 +1,31 @@
+% Auto-generated combined winner-only table across windows
+% Requires in preamble: \usepackage{booktabs,longtable}
+\setlength{\tabcolsep}{3.0pt}
+\renewcommand{\arraystretch}{1.05}
+\begin{center}
+\scriptsize
+\begin{longtable}{r r c c c c}
+\caption{Best strategy by window and $\alpha$. Each cell shows the winning strategy label(s) (A, B, C, or D) and its FER improvement relative to baseline. Strategy definitions: A = select the layer with maximum non-zero severity, then select the participating target column with minimum energy; B = select the layer with maximum non-zero severity, then select the next participating target column; C = select the layer with minimum non-zero severity, then select the participating target column with minimum energy; D = select the layer with minimum non-zero severity, then select the next participating target column. If multiple strategies tie for the best value in a window, all tied labels are shown.}\label{tab:fer-impr-winner-all-windows}\\
+\toprule
+$\alpha$ & Baseline FER & $w=3$ & $w=4$ & $w=5$ & $w=6$ \\
+\midrule
+\endfirsthead
+\toprule
+$\alpha$ & Baseline FER & $w=3$ & $w=4$ & $w=5$ & $w=6$ \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+0.03000 & 9.29e-02 & D (\textbf{+78.3\%}) & D (\textbf{+84.4\%}) & B (\textbf{+78.1\%}) & B (\textbf{+75.3\%}) \\
+0.02750 & 5.55e-02 & B (\textbf{+78.0\%}) & D (\textbf{+79.4\%}) & D (\textbf{+74.5\%}) & D (\textbf{+76.8\%}) \\
+0.02500 & 3.79e-02 & B (\textbf{+83.4\%}) & B (\textbf{+86.2\%}) & B (\textbf{+81.0\%}) & B (\textbf{+84.0\%}) \\
+0.02250 & 1.89e-02 & D (\textbf{+82.1\%}) & D (\textbf{+85.2\%}) & B (\textbf{+83.1\%}) & B (\textbf{+81.3\%}) \\
+0.02000 & 1.10e-02 & D (\textbf{+86.3\%}) & B (\textbf{+90.1\%}) & B (\textbf{+86.2\%}) & D (\textbf{+86.6\%}) \\
+0.01750 & 4.77e-03 & D (\textbf{+87.7\%}) & D (\textbf{+89.2\%}) & D (\textbf{+86.6\%}) & D (\textbf{+85.6\%}) \\
+0.01500 & 2.16e-03 & D (\textbf{+88.9\%}) & D (\textbf{+90.7\%}) & D (\textbf{+87.1\%}) & D (\textbf{+88.9\%}) \\
+0.01250 & 1.03e-03 & D (\textbf{+91.7\%}) & B (\textbf{+94.3\%}) & D (\textbf{+93.1\%}) & D (\textbf{+91.4\%}) \\
+0.01000 & 2.75e-04 & B (\textbf{+92.6\%}) & D (\textbf{+94.2\%}) & D (\textbf{+92.3\%}) & B (\textbf{+91.4\%}) \\
+0.00750 & 7.28e-05 & D (\textbf{+96.3\%}) & D (\textbf{+95.9\%}) & B (\textbf{+95.7\%}) & D (\textbf{+94.9\%}) \\
+0.00500 & 1.21e-05 & B/D (\textbf{+97.5\%}) & C/D (\textbf{+95.1\%}) & D (\textbf{+99.2\%}) & D (\textbf{+97.5\%}) \\
+\end{longtable}
+\end{center}

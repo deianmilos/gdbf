@@ -6,8 +6,7 @@
  *   2. Compute which rows have violated parity checks (receiver syndrome).
  *   3. Select the best super-layer (4 consecutive rows).
  *   4. For each row, identify the anchor column (max-energy bit) and the next
- *      participating column (target), then compute the shift delta using the
- *      configured source mode (fixed = sat-check guided, random = rand delta).
+ *      participating column (target), then compute a random bounded shift delta.
  *   5. Commit the proposed masks to fs->auxMask* arrays.
  *   6. Return FEEDBACK_STOP_FRAME, FEEDBACK_CONTINUE_ITER, or FEEDBACK_NONE.
  */
@@ -17,6 +16,26 @@
 #include "stagnation_detection.h"
 
 #include <stdlib.h>   /* rand() */
+
+static int ColumnBlockEnergyScore(const FrameState *fs, int col, int Z)
+{
+  int bitStart = col * Z;
+  int bitEnd = bitStart + Z;
+  int bit;
+  int score = 0;
+
+  if (bitStart >= fs->xLength) {
+    return 2147483647;
+  }
+  if (bitEnd > fs->xLength) {
+    bitEnd = fs->xLength;
+  }
+
+  for (bit = bitStart; bit < bitEnd; bit++) {
+    score += fs->bitEnergy[bit];
+  }
+  return score;
+}
 
 FeedbackResult RunFeedbackRound(FrameState *fs)
 {
@@ -43,9 +62,7 @@ FeedbackResult RunFeedbackRound(FrameState *fs)
     return FEEDBACK_CONTINUE_ITER;
   }
 
-  deltaMaxForZ = fs->feedbackDeltaMax;
-  if (deltaMaxForZ > (Z - 1)) deltaMaxForZ = Z - 1;
-  if (deltaMaxForZ < 1)       deltaMaxForZ = 1;
+  deltaMaxForZ = Z - 1;
 
   /* --- Step 1: Receiver — compute violated rows ------------------- */
   for (rowIdx = 0; rowIdx < fs->base->RowBlockCount; rowIdx++) {
@@ -220,16 +237,13 @@ FeedbackResult RunFeedbackRound(FrameState *fs)
             targetRowCount++;
           }
 
-          /* --- Step 4: ANCHOR-MAX + SAT-CHECK TARGET SHIFT STRATEGY -- */
+          /* --- Step 4: ANCHOR-MAX + RANDOM TARGET SHIFT STRATEGY ------- */
           {
             int infoColBlocks    = (fs->xLength + Z - 1) / Z;
-            int shiftSourceRandom = (fs->config->feedbackShiftSourceMode == 1);
-            int shiftSourceFixedNumber = (fs->config->feedbackShiftSourceMode == 2);
-            const char *shiftModeLabel = shiftSourceRandom ? "random" : (shiftSourceFixedNumber ? "fixed_number" : "fixed");
 
             FEEDBACK_LOG(fs->feedbackLogsEnabled,
-                         "[sender_calc] layer=%d anchor-max target-shift (mode=%s, info_cols=%d, global_max_energy=%d)\n",
-                         bestLayer, shiftModeLabel,
+                         "[sender_calc] layer=%d anchor-max target-shift (mode=random, info_cols=%d, global_max_energy=%d)\n",
+                         bestLayer,
                          infoColBlocks, fs->maxEnergy);
 
             for (i = 0; i < targetRowCount; i++) {
@@ -265,14 +279,31 @@ FeedbackResult RunFeedbackRound(FrameState *fs)
                 continue;
               }
 
-              /* Find TARGET column: next participating col after anchor (circular) */
+              /* Find TARGET column according to configured policy. */
               {
                 int step;
-                for (step = 1; step <= infoColBlocks; step++) {
-                  int cand = (anchorCol + step) % infoColBlocks;
-                  if (cand != anchorCol && fs->base->ShiftMatrix[row][cand] != -1) {
-                    int bs = cand * Z;
-                    if (bs < fs->xLength) { targetCol = cand; break; }
+                if (fs->config->feedbackTargetColumnMode == 1) {
+                  int bestScore = 2147483647;
+                  for (step = 1; step <= infoColBlocks; step++) {
+                    int cand = (anchorCol + step) % infoColBlocks;
+                    if (cand != anchorCol && fs->base->ShiftMatrix[row][cand] != -1) {
+                      int bs = cand * Z;
+                      if (bs < fs->xLength) {
+                        int candScore = ColumnBlockEnergyScore(fs, cand, Z);
+                        if (targetCol < 0 || candScore < bestScore) {
+                          bestScore = candScore;
+                          targetCol = cand;
+                        }
+                      }
+                    }
+                  }
+                } else {
+                  for (step = 1; step <= infoColBlocks; step++) {
+                    int cand = (anchorCol + step) % infoColBlocks;
+                    if (cand != anchorCol && fs->base->ShiftMatrix[row][cand] != -1) {
+                      int bs = cand * Z;
+                      if (bs < fs->xLength) { targetCol = cand; break; }
+                    }
                   }
                 }
               }
@@ -286,90 +317,15 @@ FeedbackResult RunFeedbackRound(FrameState *fs)
 
               curShift = fs->base->ShiftMatrix[row][targetCol];
 
-              /* Compute shift delta */
-              if (shiftSourceFixedNumber) {
-                if (Z > 1) {
-                  chosenDelta = fs->config->feedbackShiftFixedDelta % Z;
-                  if (chosenDelta == 0) {
-                    chosenDelta = 1;
-                  }
-                } else {
-                  chosenDelta = 0;
-                }
-                FEEDBACK_LOG(fs->feedbackLogsEnabled,
-                             "[sender_calc] row=%d anchor_col=%d(unchanged) target_col=%d "
-                             "delta=%d (fixed_number=%d, cur_shift=%d->%d)\n",
-                             row, anchorCol, targetCol, chosenDelta,
-                             fs->config->feedbackShiftFixedDelta,
-                             curShift, (curShift + chosenDelta) % Z);
-              } else if (shiftSourceRandom) {
-                chosenDelta = (Z > 1) ? (1 + (rand() % (Z - 1))) : 0;
-                FEEDBACK_LOG(fs->feedbackLogsEnabled,
-                             "[sender_calc] row=%d anchor_col=%d(unchanged) target_col=%d "
-                             "delta=%d (random, cur_shift=%d->%d)\n",
-                             row, anchorCol, targetCol, chosenDelta,
-                             curShift, (curShift + chosenDelta) % Z);
-              } else {
-                /* Fixed mode: find sat-check guided delta */
-                int refShift = -1, refDelta = -1, refRow = -1;
-                int otherRow;
-                for (otherRow = 0; otherRow < fs->base->RowBlockCount; otherRow++) {
-                  int d, isSatisfied, k;
-                  if (otherRow >= layerRowStart && otherRow < layerRowEnd) continue;
-                  if (fs->base->ShiftMatrix[otherRow][targetCol] == -1) continue;
-                  isSatisfied = 1;
-                  for (k = 0; k < violatedCount; k++) {
-                    if (violatedRows[k] == otherRow) { isSatisfied = 0; break; }
-                  }
-                  if (!isSatisfied) continue;
-                  d = (fs->base->ShiftMatrix[otherRow][targetCol] - curShift + Z) % Z;
-                  if (d == 0) continue;
-                  if (refShift < 0 || d < refDelta ||
-                      (d == refDelta && otherRow < refRow)) {
-                    refShift = fs->base->ShiftMatrix[otherRow][targetCol];
-                    refDelta = d;
-                    refRow   = otherRow;
-                  }
-                }
-
-                if (refDelta > 0) {
-                  chosenDelta = refDelta;
-                  FEEDBACK_LOG(fs->feedbackLogsEnabled,
-                               "[sender_calc] row=%d anchor_col=%d(unchanged) target_col=%d "
-                               "ref_row=%d ref_shift=%d delta=%d (sat-guided, cur_shift=%d->%d)\n",
-                               row, anchorCol, targetCol, refRow, refShift, chosenDelta,
-                               curShift, (curShift + chosenDelta) % Z);
-                } else {
-                  /* Fallback: local max->min within targetCol */
-                  int bitStart = targetCol * Z;
-                  int bitEnd   = bitStart + Z;
-                  int bit, blockMaxE, blockMinE, blockMaxPos = 0, step;
-                  if (bitEnd > fs->xLength) bitEnd = fs->xLength;
-                  blockMaxE = blockMinE = fs->bitEnergy[bitStart];
-                  for (bit = bitStart + 1; bit < bitEnd; bit++) {
-                    if (fs->bitEnergy[bit] > blockMaxE) blockMaxE = fs->bitEnergy[bit];
-                    if (fs->bitEnergy[bit] < blockMinE) blockMinE = fs->bitEnergy[bit];
-                  }
-                  for (bit = bitStart; bit < bitEnd; bit++) {
-                    if (fs->bitEnergy[bit] == blockMaxE) {
-                      blockMaxPos = bit - bitStart; break;
-                    }
-                  }
-                  chosenDelta = 1;
-                  for (step = 1; step <= Z; step++) {
-                    int cPos = (blockMaxPos + step) % Z;
-                    if (bitStart + cPos < bitEnd &&
-                        fs->bitEnergy[bitStart + cPos] == blockMinE) {
-                      chosenDelta = step; break;
-                    }
-                  }
-                  FEEDBACK_LOG(fs->feedbackLogsEnabled,
-                               "[sender_calc] row=%d anchor_col=%d(unchanged) target_col=%d "
-                               "delta=%d (fallback local max->min, cur_shift=%d->%d)\n",
-                               row, anchorCol, targetCol, chosenDelta,
-                               curShift, (curShift + chosenDelta) % Z);
-                }
-              }
+              /* Compute bounded random shift delta in [1, deltaMaxForZ]. */
+              chosenDelta = (Z > 1) ? (1 + (rand() % deltaMaxForZ)) : 0;
+              FEEDBACK_LOG(fs->feedbackLogsEnabled,
+                           "[sender_calc] row=%d anchor_col=%d(unchanged) target_col=%d "
+                           "target_mode=%s delta=%d (random, cur_shift=%d->%d)\n",
+                           row, anchorCol, targetCol,
+                           (fs->config->feedbackTargetColumnMode == 1) ? "min_energy" : "next",
+                           chosenDelta,
+                           curShift, (curShift + chosenDelta) % Z);
 
               proposedRows[proposedCount]      = row;
               proposedCol1[proposedCount]      = targetCol;
@@ -494,19 +450,8 @@ FeedbackResult RunFeedbackRound(FrameState *fs)
                  "[sender->receiver][round] round=%d mask_sent, receiver_will_run_next_%d_iterations\n",
                  fs->feedbackRounds, fs->feedbackIntervalIters);
 
-    if (!fs->config->feedbackContinueFromCurrent) {
-      int i;
-      InitDecodedFromReceived(fs->receivedword, fs->decodedBits, fs->codeLength);
-      for (i = 0; i < fs->xLength; i++) {
-        fs->flipCounts[i] = 0;
-      }
-      fs->recentEnergyCount = 0;
-      FEEDBACK_LOG(fs->feedbackLogsEnabled,
-                   "[receiver_calc] feedback_continue_from_current=0 -> restarted from received word\n");
-    } else {
-      FEEDBACK_LOG(fs->feedbackLogsEnabled,
-                   "[receiver_calc] feedback_continue_from_current=1 -> continuing from current decoded state\n");
-    }
+    FEEDBACK_LOG(fs->feedbackLogsEnabled,
+                 "[receiver_calc] continuing from current decoded state after feedback apply\n");
 
     StagnationStateReset(&fs->stagnationState);
     return FEEDBACK_CONTINUE_ITER;

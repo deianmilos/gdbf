@@ -1,9 +1,9 @@
-{
+﻿{
   "alpha_x_min": 0.005,
   "alpha_x_max": 0.04,
   "output_dir": "visualize/plots/irisc_dv3_50it_random",
   "dpi": 450,
-  "save_pdf": true,
+  "save_pdf": false,
   "show_title": false,
   "legend_loc": "lower left",
   "paper_monochrome": true,
@@ -80,3 +80,4 @@
     }
   ]
 }
+

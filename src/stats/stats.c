@@ -25,6 +25,7 @@ void ResetSimulationStats(SimulationStats *stats)
   stats->maxFailedBitErrors = 0;
   stats->sumFailedBitErrors = 0;
   stats->failedFrameCount = 0;
+  stats->failedZeroBitErrorAnomalyCount = 0;
 
   stats->minAddedAuxEquations = 100000;
   stats->maxAddedAuxEquations = 0;
@@ -33,6 +34,8 @@ void ResetSimulationStats(SimulationStats *stats)
   stats->minUnsuccessfulRoundsToSyndrome0 = 100000;
   stats->maxUnsuccessfulRoundsToSyndrome0 = 0;
   stats->sumUnsuccessfulRoundsToSyndrome0 = 0;
+  stats->minUnsuccessfulRoundsToSyndrome0Count = 0;
+  stats->maxUnsuccessfulRoundsToSyndrome0Count = 0;
   stats->syndrome0FrameCount = 0;
 
   stats->minMaxEnergyBitsBeforeFeedback = 100000;
@@ -75,6 +78,15 @@ void UpdateSimulationStats(
     }
   }
 
+  /*
+   * Consistency guard: a failed frame should have at least one residual bit error.
+   * If not, record anomaly and floor to 1 for all downstream statistics.
+   */
+  if (!isCodeword && frameBitErrors <= 0) {
+    stats->failedZeroBitErrorAnomalyCount++;
+    frameBitErrors = 1;
+  }
+
   stats->nbtestedframes++;
   stats->NbBitError += frameBitErrors;
 
@@ -94,9 +106,15 @@ void UpdateSimulationStats(
     stats->sumUnsuccessfulRoundsToSyndrome0 += unsuccessfulRoundsToSyndrome0;
     if (unsuccessfulRoundsToSyndrome0 < stats->minUnsuccessfulRoundsToSyndrome0) {
       stats->minUnsuccessfulRoundsToSyndrome0 = unsuccessfulRoundsToSyndrome0;
+      stats->minUnsuccessfulRoundsToSyndrome0Count = 1;
+    } else if (unsuccessfulRoundsToSyndrome0 == stats->minUnsuccessfulRoundsToSyndrome0) {
+      stats->minUnsuccessfulRoundsToSyndrome0Count++;
     }
     if (unsuccessfulRoundsToSyndrome0 > stats->maxUnsuccessfulRoundsToSyndrome0) {
       stats->maxUnsuccessfulRoundsToSyndrome0 = unsuccessfulRoundsToSyndrome0;
+      stats->maxUnsuccessfulRoundsToSyndrome0Count = 1;
+    } else if (unsuccessfulRoundsToSyndrome0 == stats->maxUnsuccessfulRoundsToSyndrome0) {
+      stats->maxUnsuccessfulRoundsToSyndrome0Count++;
     }
   }
 
@@ -146,22 +164,23 @@ void PrintStatsHeader(FILE *fout, int showAuxEquationStats, int circulantSize)
 {
   (void)circulantSize;
 
-  printf("alpha\tNbEr(BER)\t\t\tNbFer(FER)\t\t\tNbtested\t\tIterAver(Itermax)\tSuccessIter(min/avg/max)\tFailedBits(min/avg/max)\tMLInferences(min/avg/max)");
+  printf("alpha\tNbEr(BER)\t\t\tNbFer(FER)\t\t\tNbtested\t\tIterAver(Itermax)\tSuccessIter(min/avg/max)\tFailedBits(min/avg/max)\tMLInferences(min/avg/max)\tFailedZeroBitsAnom");
   if (showAuxEquationStats) {
     printf("\tAddedAuxEq(min/avg/max)");
-    printf("\tUnsuccSRRoundsToS0(min/avg/max)");
+    printf("\tFBRoundsBeforeS0(min[pct]/avg/max[pct])");
     printf("\tMaxEnergyBitsBeforeFB(min/avg/max)");
   }
   printf("\n");
 
   if (fout != NULL) {
-    fprintf(fout, "alpha\tNbEr(BER)\t\t\tNbFer(FER)\t\t\tNbtested\t\tIterAver(Itermax)\tSuccessIter(min/avg/max)\tFailedBits(min/avg/max)\tMLInferences(min/avg/max)");
+    fprintf(fout, "alpha\tNbEr(BER)\t\t\tNbFer(FER)\t\t\tNbtested\t\tIterAver(Itermax)\tSuccessIter(min/avg/max)\tFailedBits(min/avg/max)\tMLInferences(min/avg/max)\tFailedZeroBitsAnom");
     if (showAuxEquationStats) {
       fprintf(fout, "\tAddedAuxEq(min/avg/max)");
-      fprintf(fout, "\tUnsuccSRRoundsToS0(min/avg/max)");
+      fprintf(fout, "\tFBRoundsBeforeS0(min[pct]/avg/max[pct])");
       fprintf(fout, "\tMaxEnergyBitsBeforeFB(min/avg/max)");
     }
     fprintf(fout, "\n");
+    fflush(fout);
   }
 }
 
@@ -210,19 +229,27 @@ void PrintStatsLine(
     printf("-/-/-");
   }
 
+  printf("\t%d", stats->failedZeroBitErrorAnomalyCount);
+
   if (showAuxEquationStats) {
     if (stats->syndrome0FrameCount > 0) {
       float avgAuxEq = (float)stats->sumAddedAuxEquations / stats->syndrome0FrameCount;
       float avgUnsuccessfulRounds =
         (float)stats->sumUnsuccessfulRoundsToSyndrome0 / stats->syndrome0FrameCount;
+      float minRoundsPct =
+        (100.0f * (float)stats->minUnsuccessfulRoundsToSyndrome0Count) / (float)stats->syndrome0FrameCount;
+      float maxRoundsPct =
+        (100.0f * (float)stats->maxUnsuccessfulRoundsToSyndrome0Count) / (float)stats->syndrome0FrameCount;
       printf("\t%d/%.2f/%d", stats->minAddedAuxEquations, avgAuxEq, stats->maxAddedAuxEquations);
-      printf("\t%d/%.2f/%d",
+      printf("\t%d(%.2f%%)/%.2f/%d(%.2f%%)",
              stats->minUnsuccessfulRoundsToSyndrome0,
-             avgUnsuccessfulRounds,
-             stats->maxUnsuccessfulRoundsToSyndrome0);
+             minRoundsPct,
+              avgUnsuccessfulRounds,
+              stats->maxUnsuccessfulRoundsToSyndrome0,
+             maxRoundsPct);
     } else {
       printf("\t-/-/-");
-      printf("\t-/-/-");
+      printf("\t-(-)/-/-(-)");
     }
 
     if (stats->countMaxEnergyBitsBeforeFeedback > 0) {
@@ -260,19 +287,34 @@ void PrintStatsLine(
       fprintf(fout, "-/-/-");
     }
 
+    if (stats->mlInferenceFrameCount > 0) {
+      float avgMLInferences = (float)stats->sumMLInferencesPerFrame / stats->mlInferenceFrameCount;
+      fprintf(fout, "\t%d/%.1f/%d", stats->minMLInferencesPerFrame, avgMLInferences, stats->maxMLInferencesPerFrame);
+    } else {
+      fprintf(fout, "\t-/-/-");
+    }
+
+    fprintf(fout, "\t%d", stats->failedZeroBitErrorAnomalyCount);
+
     if (showAuxEquationStats) {
       if (stats->syndrome0FrameCount > 0) {
         float avgAuxEq = (float)stats->sumAddedAuxEquations / stats->syndrome0FrameCount;
         float avgUnsuccessfulRounds =
           (float)stats->sumUnsuccessfulRoundsToSyndrome0 / stats->syndrome0FrameCount;
+        float minRoundsPct =
+          (100.0f * (float)stats->minUnsuccessfulRoundsToSyndrome0Count) / (float)stats->syndrome0FrameCount;
+        float maxRoundsPct =
+          (100.0f * (float)stats->maxUnsuccessfulRoundsToSyndrome0Count) / (float)stats->syndrome0FrameCount;
         fprintf(fout, "\t%d/%.2f/%d", stats->minAddedAuxEquations, avgAuxEq, stats->maxAddedAuxEquations);
-        fprintf(fout, "\t%d/%.2f/%d",
+        fprintf(fout, "\t%d(%.2f%%)/%.2f/%d(%.2f%%)",
                stats->minUnsuccessfulRoundsToSyndrome0,
-               avgUnsuccessfulRounds,
-               stats->maxUnsuccessfulRoundsToSyndrome0);
+               minRoundsPct,
+           avgUnsuccessfulRounds,
+           stats->maxUnsuccessfulRoundsToSyndrome0,
+               maxRoundsPct);
       } else {
         fprintf(fout, "\t-/-/-");
-        fprintf(fout, "\t-/-/-");
+        fprintf(fout, "\t-(-)/-/-(-)");
       }
 
       if (stats->countMaxEnergyBitsBeforeFeedback > 0) {
@@ -287,5 +329,6 @@ void PrintStatsLine(
       }
     }
     fprintf(fout, "\n");
+    fflush(fout);
   }
 }

@@ -501,7 +501,7 @@ def plot_failed_bits_summary(
                 markeredgewidth=float(style.get("markeredgewidth", 0.8)),
             )
 
-        ax.set_xlabel(r"BSC crossover probability $\alpha$")
+        ax.set_xlabel(r"BSC crossover probability, alpha")
         ax.set_ylabel(ylabel)
         ax.set_xlim(x_hi, x_lo)
         ax.grid(True, which="major", linestyle="-", linewidth=0.4, alpha=0.25)
@@ -584,7 +584,7 @@ def plot_failed_bits_histogram(
     # x ticks: show alpha values, rotated for readability
     ax.set_xticks(x_pos)
     ax.set_xticklabels([f"{a:.4g}" for a in all_alphas], rotation=55, ha="right", fontsize=7)
-    ax.set_xlabel(r"BSC crossover probability $\alpha$")
+    ax.set_xlabel(r"BSC crossover probability, alpha")
     ax.set_ylabel("Number of failed frames")
     if show_title:
         ax.set_title(title)
@@ -667,7 +667,7 @@ def plot_failed_bits_bar(
 
     ax.set_xticks(x_pos)
     ax.set_xticklabels([f"{a:.4g}" for a in all_alphas], rotation=55, ha="right", fontsize=7)
-    ax.set_xlabel(r"BSC crossover probability $\alpha$")
+    ax.set_xlabel(r"BSC crossover probability, alpha")
     ax.set_ylabel(ylabel)
     if show_title:
         ax.set_title(title)
